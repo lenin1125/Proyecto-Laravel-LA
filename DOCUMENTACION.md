@@ -1,7 +1,8 @@
 # Documentación del proyecto `hotel-consumos-api`
 
-> Revisión estática realizada sin modificar el código. Fecha: 09/11/2026.
-> Solo se ejecutaron comandos de consulta (`route:list`, `migrate:status`, `php -m`, `SHOW TABLES`, `DESCRIBE`, `COUNT(*)`). No se ejecutó la suite de pruebas para no alterar la base `hotel_consumos_api_test`.
+> Revisión inicial: 09/11/2026 (solo lectura).
+> Actualización: 11/11/2026. Se implementaron roles, middlewares de permisos y autorización SOAP por rol.
+> Los puntos marcados como **corregido** ya están en el código y cubiertos por pruebas.
 
 ---
 
@@ -21,11 +22,12 @@ API REST en **Laravel 10 / PHP 8.1** para registrar y cobrar consumos extras de 
 **Estado verificado localmente:**
 
 - PHP 8.1.10 con `pdo_mysql` y `soap` cargados.
-- 13 rutas registradas.
-- 6 migraciones ejecutadas.
+- 7 rutas registradas en `/api` (incluye login, logout, me y las cuatro acciones de negocio).
+- 7 migraciones ejecutadas (la última agrega `users.role`).
 - `hotel_consumos_api`: 7 tablas.
 - `hotel_db`: 4 tablas (`habitacion`, `huesped`, `reserva`, `usuarios`).
-- No hay repositorio Git inicializado en la carpeta.
+- Git inicializado en los dos proyectos; etiqueta base `linea-base` y commits por bloque.
+- 42 pruebas automatizadas en verde (174 aserciones).
 
 ---
 
@@ -34,39 +36,48 @@ API REST en **Laravel 10 / PHP 8.1** para registrar y cobrar consumos extras de 
 ```text
 app/
 ├── Console/
-│   ├── Commands/CrearUsuarioSoap.php   Comando usuario:crear
+│   ├── Commands/CrearUsuarioSoap.php   Comando usuario:crear (acepta --role)
 │   └── Kernel.php                      Registro de comandos y schedule vacío
-├── Exceptions/Handler.php              Handler estándar de Laravel
+├── Exceptions/
+│   ├── Handler.php                     Handler estándar de Laravel
+│   └── SoapUnavailableException.php    Distingue SOAP caído (503) de 404
 ├── Http/
 │   ├── Controllers/Api/
 │   │   ├── AuthController.php          Login, perfil y logout
 │   │   └── ConsumoController.php       Consumos, pagos y checkout
-│   ├── Middleware/                     Scaffold de Laravel (ver sección 10)
-│   └── Kernel.php                      Middleware global/api/web
+│   ├── Middleware/
+│   │   ├── AutorizaRoles.php           Trait con el 403 y el mensaje exacto
+│   │   ├── IsAdministrator.php         Solo administrador
+│   │   ├── CanRegisterConsumptions.php administrador + servicio_habitacion
+│   │   ├── CanConsultAccount.php       administrador + servicio + recepcionista
+│   │   ├── CanProcessPayments.php      administrador + cajero
+│   │   ├── CanCheckOut.php             administrador + cajero + recepcionista
+│   │   └── ...                         Scaffold de Laravel
+│   └── Kernel.php                      Middleware global/api/web y alias de rol
 ├── Models/
-│   ├── User.php                        Usuario + Sanctum
+│   ├── User.php                        Usuario + Sanctum + constantes de rol
 │   ├── Consumo.php                     Tabla consumos
 │   └── PagoConsumo.php                 Tabla pagos_consumos
 ├── Providers/                          Providers estándar
 └── Services/
     ├── SoapService.php                 Cliente SOAP con WS-Security
-    └── HotelUsuarioSync.php            Sincroniza usuario/token a hotel_db
+    └── HotelUsuarioSync.php            Sincroniza usuario, token y rol a hotel_db
 
 routes/
-├── api.php                             Todas las rutas funcionales
+├── api.php                             Rutas funcionales con middleware de rol
 ├── web.php                             Solo la página de bienvenida de Laravel
 └── console.php                         Comando de ejemplo inspire
 
 database/
-├── migrations/                         6 migraciones
-├── seeders/                            DatabaseSeeder vacío + UsuarioSoapSeeder
-└── factories/UserFactory.php
+├── migrations/                         7 migraciones
+├── seeders/                            DatabaseSeeder + UsuarioRolSeeder
+└── factories/UserFactory.php           Estados por rol y sinRol()
 
 tests/
-├── Feature/                            Auth, consumos y SOAP
+├── Feature/                            Auth, consumos, roles y SOAP
 └── Unit/                               Sync y test de ejemplo
 
-postman/                                Colección y entorno listos para importar
+postman/                                Dos colecciones y un entorno compartido
 config/services.php                     Configuración SOAP y soap_db
 ```
 
@@ -84,9 +95,9 @@ Archivo principal: `app/Http/Controllers/Api/AuthController.php`.
    - bloquea la fila del usuario (`lockForUpdate`);
    - **elimina todos los tokens anteriores** (`tokens()->delete()`);
    - crea un token Sanctum nuevo con nombre `dispositivo` o `"soapui"`;
-   - llama a `HotelUsuarioSync::sincronizar(email, password_hash, token_plano)`.
+   - llama a `HotelUsuarioSync::sincronizar(email, password_hash, token_plano, role)`.
 4. `HotelUsuarioSync` abre una conexión **PDO directa** a `hotel_db` reutilizando host, puerto, usuario y clave de la conexión MySQL de Laravel:
-   - si el usuario existe en `hotel_db.usuarios`, actualiza `password` y `api_token`;
+   - si el usuario existe en `hotel_db.usuarios`, actualiza `password`, `api_token` y `role`;
    - si no existe, lo inserta;
    - guarda **SHA-256 del token**, no el token plano.
 5. Devuelve:
@@ -94,10 +105,10 @@ Archivo principal: `app/Http/Controllers/Api/AuthController.php`.
 ```json
 {
   "mensaje": "Autenticacion exitosa.",
-  "usuario": { "id": 1, "nombre": "Lenin", "email": "lenin@hotel.test" },
+  "usuario": { "id": 1, "nombre": "Administrador", "email": "administrador@hotel.test", "rol": "administrador" },
   "token": "...",
   "token_type": "Bearer",
-  "soap_username": "lenin@hotel.test",
+  "soap_username": "administrador@hotel.test",
   "soap_token": "...",
   "expira": null
 }
@@ -109,7 +120,7 @@ Archivo principal: `app/Http/Controllers/Api/AuthController.php`.
 
 ### 3.2 `GET /api/me`
 
-Devuelve `id`, `nombre`, `email` y `soap_username` del usuario autenticado.
+Devuelve `id`, `nombre`, `email`, `rol` y `soap_username` del usuario autenticado. `rol` puede ser `null` si la cuenta no tiene rol asignado.
 
 ### 3.3 `POST /api/logout`
 
@@ -117,6 +128,41 @@ Devuelve `id`, `nombre`, `email` y `soap_username` del usuario autenticado.
 2. `revocar()` ejecuta `UPDATE usuarios SET api_token = NULL WHERE username = ? AND api_token = SHA256(token)`.
 3. Elimina el token actual de `personal_access_tokens`.
 4. Si falla el paso remoto → `503` y **conserva** el token local para reintentar.
+
+### 3.4 Roles y permisos (REST)
+
+Los roles se guardan en `users.role` (varchar 30, nullable). Las constantes viven en `App\Models\User`:
+
+| Constante | Valor |
+|---|---|
+| `ROLE_ADMIN` | `administrador` |
+| `ROLE_SERVICIO` | `servicio_habitacion` |
+| `ROLE_CAJERO` | `cajero` |
+| `ROLE_RECEPCION` | `recepcionista` |
+
+Cada acción de negocio tiene su middleware, registrado en `app/Http/Kernel.php` y aplicado en `routes/api.php`:
+
+| Acción | Ruta | Middleware | Roles permitidos |
+|---|---|---|---|
+| Registrar consumo | `POST /api/consumos` | `CanRegisterConsumptions` | administrador, servicio_habitacion |
+| Consultar estado de cuenta | `GET /api/consumos/reserva/{id}` | `CanConsultAccount` | administrador, servicio_habitacion, recepcionista |
+| Pagar consumo | `POST /api/consumos/{id}/pagar` | `CanProcessPayments` | administrador, cajero |
+| Verificar checkout | `GET /api/checkout-status/{id}` | `CanCheckOut` | administrador, cajero, recepcionista |
+
+Reglas:
+
+- El rol se lee del usuario autenticado en base de datos; **nunca** del cuerpo de la petición.
+- `auth:sanctum` corre antes del middleware de rol, así que un token ausente o inválido devuelve `401` y no `403`.
+- Un rol `null` o desconocido recibe `403`.
+- Cuerpo exacto del `403`:
+
+```json
+{ "error": "Permisos insuficientes para ejecutar este método" }
+```
+
+- `CanRegisterConsumptions` y el resto repiten `administrador` de forma explícita (variante A1).
+- `IsAdministrator` existe y está registrado, aunque hoy ninguna ruta lo usa en exclusiva.
+- Cambiar el rol con `usuario:crear --role` elimina los tokens de Sanctum y anula el `api_token` en `hotel_db`, obligando a un login nuevo.
 
 ---
 
@@ -134,22 +180,52 @@ Archivo: `app/Services/SoapService.php`.
 
 El servidor externo (`C:\laragon\www\hotel\server.php` + `auth.php`) valida el par usuario/token contra `hotel_db.usuarios` y compara el SHA-256 recibido.
 
+### 4.1 Autorización de operaciones SOAP por rol
+
+`auth.php` incorpora tres funciones:
+
+- `obtenerRolUsuarioSOAP($username, $pdo = null)`: lee `usuarios.role`.
+- `operacionesPermitidasPorRol()`: mapa cerrado rol → operaciones.
+- `autorizarOperacionSOAP($operacion, $pdo = null)`: valida credenciales, rol y operación.
+
+Mapa vigente:
+
+| Rol | Operaciones permitidas |
+|---|---|
+| administrador | las 6 |
+| servicio_habitacion | `consultarReservas` |
+| recepcionista | `consultarHabitacion`, `listarHabitaciones`, `consultarReservas` |
+| cajero | ninguna |
+| rol `null` o desconocido | ninguna |
+
+Operaciones registradas: `registrarHabitacion`, `consultarHabitacion`, `listarHabitaciones`, `actualizarHabitacion`, `registrarReserva`, `consultarReservas`. Cualquier operación fuera de esa lista se niega por defecto.
+
+`server.php` valida **antes** de llamar a `$server->service()`:
+
+1. Credenciales inválidas → HTTP `401` con fault `401 Unauthorized: usuario o token invalido.`
+2. Sobre ilegible → HTTP `400`.
+3. Operación desconocida o rol sin permiso → HTTP `403` con fault `403 Forbidden: permisos insuficientes para ejecutar este método.`
+4. Operación permitida → NuSOAP ejecuta y responde `200`.
+
+Se hace antes de `service()` porque NuSOAP convierte cualquier `soap_fault` en HTTP `500`. `ejecutarOperacionHotel()` conserva las mismas verificaciones como defensa en profundidad.
+
+La petición WSDL (`GET ?wsdl`) queda abierta: describe el contrato y no ejecuta ninguna operación.
+
 ---
 
 ## 5. Endpoints
 
 Todas las rutas están en `routes/api.php`. Prefijo `/api`.
 
-| Método | Ruta | Auth | Qué hace | Códigos |
-|---|---|---|---|---|
-| POST | `/login` | No | Genera token y sincroniza con SOAP | 200, 401, 422, 503 |
-| GET | `/me` | Bearer | Datos del usuario | 200, 401 |
-| POST | `/logout` | Bearer | Revoca token local y remoto | 200, 401, 503 |
-| POST | `/consumos` | Bearer | Valida reserva en SOAP y registra consumo | 201, 400, 404, 422, 401 |
-| GET | `/consumos/reserva/{id_reserva}` | Bearer | Consumos + datos de reserva desde SOAP | 200, 401 |
-| POST | `/consumos/{id}/pagar` | Bearer | Marca consumo como pagado y registra pago | 200, 400, 404, 422, 401 |
-| GET | `/checkout-status/{id_reserva}` | Bearer | Saldo pendiente y paz y salvo | 200, 401 |
-| GET | `/user` | Bearer | Duplicado de `/me`, devuelve el modelo User completo | 200, 401 |
+| Método | Ruta | Auth | Rol permitido | Qué hace | Códigos |
+|---|---|---|---|---|---|
+| POST | `/login` | No | — | Genera token y sincroniza con SOAP | 200, 401, 422, 503 |
+| GET | `/me` | Bearer | cualquiera autenticado | Datos del usuario y su rol | 200, 401 |
+| POST | `/logout` | Bearer | cualquiera autenticado | Revoca token local y remoto | 200, 401, 503 |
+| POST | `/consumos` | Bearer | admin, servicio | Valida reserva en SOAP y registra consumo | 201, 400, 404, 422, 401, 403, 503 |
+| GET | `/consumos/reserva/{id_reserva}` | Bearer | admin, servicio, recepción | Consumos + datos de reserva desde SOAP | 200, 401, 403, 503 |
+| POST | `/consumos/{id}/pagar` | Bearer | admin, cajero | Marca consumo como pagado y registra pago | 200, 400, 404, 422, 401, 403 |
+| GET | `/checkout-status/{id_reserva}` | Bearer | admin, cajero, recepción | Saldo pendiente y paz y salvo | 200, 401, 403 |
 
 ### Reglas de negocio de consumos
 
@@ -157,6 +233,7 @@ Todas las rutas están en `routes/api.php`. Prefijo `/api`.
 - `concepto`: obligatorio, string, máx. 255.
 - `monto`: obligatorio, numérico, mínimo 0.01.
 - La reserva debe existir en SOAP; si `obtenerReserva()` devuelve `null` → `404`.
+- Si SOAP no responde o rechaza la autenticación → `503` (`SoapUnavailableException`), no `404`.
 - El estado de la reserva debe ser `activo` o `activa` (comparación en minúsculas) → si no, `400`.
 - El consumo se crea con estado `Pendiente`.
 - `pagar` acepta exactamente: `Efectivo`, `Tarjeta`, `Cargo a la habitación`.
@@ -171,7 +248,7 @@ Todas las rutas están en `routes/api.php`. Prefijo `/api`.
 
 | Tabla | Uso | Campos relevantes |
 |---|---|---|
-| `users` | Usuarios de la API | `id`, `name`, `email` único, `password`, `email_verified_at` |
+| `users` | Usuarios de la API | `id`, `name`, `email` único, `password`, `role` (varchar 30, nullable), `email_verified_at` |
 | `personal_access_tokens` | Tokens Sanctum | `tokenable`, `name`, `token(64)`, `abilities`, `expires_at` |
 | `consumos` | Consumos extras | `id`, `id_reserva` (varchar, **sin FK**), `concepto`, `monto decimal(10,2)`, `estado enum(Pendiente, Pagado)`, `fecha_registro`, timestamps |
 | `pagos_consumos` | Pagos | `id`, `consumo_id` FK → `consumos` con `cascade`, `metodo_pago`, `fecha_pago`, timestamps |
@@ -189,9 +266,9 @@ Relación: `Consumo 1 ── N PagoConsumo` (`consumo_id`).
 | `habitacion` | Habitaciones |
 | `huesped` | Huéspedes |
 | `reserva` | Reservas; `estado` por defecto `CONFIRMADA`, pero el alta de la app inserta `ACTIVA` |
-| `usuarios` | `id`, `username` (varchar 50, único), `password`, `api_token` (varchar 80, único, nullable), `created_at` |
+| `usuarios` | `id`, `username` (varchar 50, único), `password`, `api_token` (varchar 80, único, nullable), `role` (varchar 30, nullable), `created_at` |
 
-> `hotel_db.usuarios` **no aparece en `hotel_db.sql`**. La tabla existe en la base local, pero un entorno nuevo no la crea con ese script: hay que crearla a mano o agregarla al SQL. Si no existe, el login devuelve `503`.
+> `hotel_db.sql` ya crea `usuarios` con `role`, así que un entorno nuevo puede autenticarse y autorizar sin pasos manuales. En una base existente hay que agregar la columna con `ALTER TABLE usuarios ADD COLUMN role VARCHAR(30) NULL AFTER api_token;` si todavía no está.
 
 ---
 
@@ -217,10 +294,11 @@ Relación: `Consumo 1 ── N PagoConsumo` (`consumo_id`).
 
 ### Diferencias de entorno detectadas
 
-- `.env` usa `DB_DATABASE=hotel_consumos_api`; `.env.example` sigue con `DB_DATABASE=laravel`. Un clon nuevo apuntaría a la base equivocada.
-- `.env` define `APP_URL=http://localhost`; el entorno Postman usa `http://hotel-consumos-api.test`.
-- `.env` conserva `SOAP_URL` y `SOAP_SECRET_KEY` (HMAC legado) que **ningún archivo PHP lee**.
-- `.env` contiene credenciales reales de MySQL. `.gitignore` excluye `.env`, pero como no hay Git inicializado, el archivo está en disco sin control de versiones.
+- **Corregido:** `.env.example` usa `APP_NAME`, `APP_URL=http://hotel-consumos-api.test` y `DB_DATABASE=hotel_consumos_api`.
+- **Corregido:** `.env` ya no contiene `SOAP_URL` ni `SOAP_SECRET_KEY`.
+- **Corregido:** `.env` y `.env.example` están alineados con `base_url` de Postman.
+- `.env` contiene credenciales reales de MySQL y está excluido por `.gitignore`; nunca debe subirse.
+- Los cuatro usuarios de demostración comparten la contraseña `123456`. Es solo para el entorno local.
 
 ---
 
@@ -228,13 +306,25 @@ Relación: `Consumo 1 ── N PagoConsumo` (`consumo_id`).
 
 ```bash
 php artisan migrate
-php artisan usuario:crear correo@dominio.com 123456 --name=Nombre
+php artisan db:seed                        # crea los cuatro usuarios de demostración
+php artisan usuario:crear correo@dominio.com 123456 --name=Nombre --role=cajero
 php artisan serve
 php artisan test
 php artisan route:list
 ```
 
-`usuario:crear` crea o actualiza el usuario en `users` y valida email y contraseña (mínimo 6). **No genera el token**: eso se hace con `POST /api/login`.
+`usuario:crear` crea o actualiza el usuario en `users` y valida email y contraseña (mínimo 6). `--role` acepta `administrador`, `servicio_habitacion`, `cajero` y `recepcionista`; si se omite, el rol no se modifica. Cuando el rol cambia, el comando revoca los tokens de Sanctum y el `api_token` de `hotel_db`. **No genera token**: eso se hace con `POST /api/login`.
+
+Usuarios de demostración (`UsuarioRolSeeder`):
+
+| Rol | Correo | Contraseña |
+|---|---|---|
+| administrador | `administrador@hotel.test` | `123456` |
+| servicio_habitacion | `servicio@hotel.test` | `123456` |
+| cajero | `cajero@hotel.test` | `123456` |
+| recepcionista | `recepcionista@hotel.test` | `123456` |
+
+`lenin@hotel.test` y `prueba@hotel.test` quedan sin rol: inician sesión, pero reciben `403` en las cuatro acciones de negocio.
 
 ---
 
@@ -242,17 +332,20 @@ php artisan route:list
 
 | Archivo | Pruebas | Cobertura |
 |---|---|---|
-| `tests/Feature/AuthApiTest.php` | 10 | Login, validación, token, `/me`, revocación, logout, fallos 503 y conservación de tokens |
+| `tests/Feature/AuthApiTest.php` | 10 | Login, validación, token, rol en la respuesta, `/me`, revocación, logout, fallos 503 y conservación de tokens |
 | `tests/Feature/ConsumoApiTest.php` | 4 | 401 sin token, checkout, `porReserva` con SOAP simulado y alta de consumo |
+| `tests/Feature/ConsumoPagoTest.php` | 5 | Pago exitoso, doble pago, método inválido y consumo inexistente |
+| `tests/Feature/RoleAccessTest.php` | 11 | Matriz 4x4 de permisos, `401` sin token, rol `null`, cuerpo exacto del `403`, rol falsificado en el body y rol sin permiso no llega a SOAP |
+| `tests/Feature/SoapFallbackTest.php` | 4 | SOAP caído devuelve `503` y no `404` |
 | `tests/Feature/SoapServiceTest.php` | 1 | Exige token para crear cliente SOAP |
-| `tests/Feature/SoapTokenTest.php` | 2 | Flujo real contra `C:\laragon\www\hotel\auth.php` y formatos inválidos |
-| `tests/Unit/HotelUsuarioSyncTest.php` | 1 | Guarda SHA-256 y revoca solo el token presentado |
+| `tests/Feature/SoapTokenTest.php` | 4 | Flujo real contra `C:\laragon\www\hotel\auth.php`, mapa de permisos SOAP, detección de la operación y formatos inválidos |
+| `tests/Unit/HotelUsuarioSyncTest.php` | 1 | Guarda SHA-256 y el rol, y revoca solo el token presentado |
 | `tests/Unit/ExampleTest.php` | 1 | `assertTrue(true)` — scaffold |
 | `tests/Feature/ExampleTest.php` | 1 | `GET /` responde 200 — scaffold |
 
-**Total: 20 pruebas.** No se ejecutaron para no tocar las bases de datos.
+**Total: 42 pruebas, 174 aserciones, en verde.**
 
-**No cubierto:** pago exitoso, reserva inexistente, reserva no activa, SOAP caído, checkout con paz y salvo, doble pago y concurrencia.
+**No cubierto:** concurrencia real de pagos, expiración de tokens, cambio de rol a mitad de sesión (queda forzado por la revocación) y pruebas de carga.
 
 **Acoplamiento:** `SoapTokenTest` hace `require_once` de `C:\laragon\www\hotel\auth.php`, fuera de este proyecto. Si se mueve la carpeta hermana, la prueba falla.
 
@@ -264,8 +357,7 @@ php artisan route:list
 
 | Archivo / elemento | Situación |
 |---|---|
-| `database/seeders/UsuarioSoapSeeder.php` | No lo llama `DatabaseSeeder`. Solo funciona con `db:seed --class=...`. Está dormido. |
-| `database/seeders/DatabaseSeeder.php` | Vacío: `php artisan db:seed` no hace nada. |
+| `database/seeders/UsuarioSoapSeeder.php` | No lo llama `DatabaseSeeder`. Solo funciona con `db:seed --class=...`. Está dormido; el seeder activo es `UsuarioRolSeeder`. |
 | `tests/Unit/ExampleTest.php` | Solo `assertTrue(true)`. No aporta cobertura. |
 | `tests/Feature/ExampleTest.php` | Solo verifica la portada de Laravel; no prueba el dominio. |
 | `database/migrations/..._create_password_reset_tokens_table.php` | No existe recuperación de contraseña. |
@@ -273,16 +365,14 @@ php artisan route:list
 | `app/Http/Middleware/TrustHosts.php` | Su registro está comentado en `Kernel.php`. |
 | `app/Http/Middleware/RedirectIfAuthenticated.php` | Alias `guest`; ninguna ruta lo usa. |
 | `app/Http/Middleware/ValidateSignature.php` | Alias `signed`; ninguna ruta lo usa. |
-| `README.md` | Es el README genérico de Laravel; la documentación real está en `postman/README.md`. |
-| `.env`: `SOAP_URL` y `SOAP_SECRET_KEY` | Restos del esquema HMAC retirado; no los lee ningún PHP. |
+| `app/Http/Middleware/IsAdministrator.php` | Registrado, pero ninguna ruta lo usa en exclusiva (variante A1). |
 | `routes/console.php` (`inspire`) | Comando de ejemplo del scaffold. |
 | `app/Models/Consumo.php`: `pagos()` | Relación nunca invocada. |
 | `app/Models/PagoConsumo.php`: `consumo()` | Relación nunca invocada. |
-| `Consumo` / `PagoConsumo`: trait `HasFactory` | No existen `ConsumoFactory` ni `PagoConsumoFactory`; `factory()` fallaría. |
+| `Consumo` / `PagoConsumo`: trait `HasFactory` | No existen `ConsumoFactory` ni `PagoConsumoFactory`; se conserva porque las pruebas crean los modelos directamente. |
 | `User`: trait `Notifiable` | No se envían notificaciones. |
 | `UserFactory::unverified()` | Nunca se usa. |
 | `$fillable`: `fecha_registro`, `fecha_pago` | Nunca se asignan; los pone la BD por defecto. |
-| `GET /api/user` en `routes/api.php` | Duplicado de `/api/me`. |
 | Ruta `sanctum/csrf-cookie` | Registrada por Sanctum, pero no hay SPA que la use. |
 | `resources/views/welcome.blade.php` + `routes/web.php` | Solo sirven la portada de Laravel; el proyecto es API-only. No están rotos, pero están fuera del alcance funcional. |
 
@@ -308,65 +398,94 @@ Dentro de `config/services.php`, las secciones `mailgun`, `postmark` y `ses` no 
 
 ## 11. Hallazgos y riesgos técnicos
 
-### Prioridad alta
+### 11.1 Corregidos el 11/11/2026
 
-1. **SOAP caído se reporta como reserva inexistente.** `SoapService::obtenerReserva()` atrapa cualquier `Throwable` y devuelve `null`; el controlador responde `404 "La reserva no existe"`. Un fallo de red o de credenciales se confunde con datos inexistentes. Conviene distinguir "SOAP no disponible" (`503`) de "reserva no encontrada" (`404`).
-2. **`pagar()` no es transaccional.** Primero guarda `estado = Pagado` y luego crea el pago. Si falla la creación del pago, el consumo queda pagado sin registro. Además, dos peticiones concurrentes pueden pagar el mismo consumo dos veces. Debería ir dentro de `DB::transaction` con bloqueo (`lockForUpdate`).
-3. **Sincronización distribuida sin transacción.** La escritura en `hotel_db` ocurre fuera de la transacción de Laravel. Si el commit local falla después de escribir el token remoto, ambas bases quedan desalineadas. Ya está documentado en `postman/README.md`, pero conviene tenerlo presente.
-4. **Falta `hotel_db.usuarios` en `hotel_db.sql`.** Un entorno limpio no puede autenticarse hasta crear la tabla manualmente.
-5. **Credenciales en texto plano.** `.env` y el entorno Postman contienen contraseñas reales. El tipo `secret` de Postman solo las oculta en la interfaz. `SOAP_SECRET_KEY` es un secreto muerto que debería eliminarse.
+1. **SOAP caído ya no se confunde con reserva inexistente.** `SoapService` lanza `SoapUnavailableException` y la API responde `503`; `404` queda para reserva realmente ausente.
+2. **`pagar()` es transaccional.** Va dentro de `DB::transaction` con `lockForUpdate`, así que no queda un consumo pagado sin registro de pago.
+3. **`hotel_db.usuarios` está en `hotel_db.sql`**, con `role`. Un entorno nuevo queda operativo sin pasos manuales.
+4. **`monto` se devuelve como número** en las respuestas (cast a `float`).
+5. **`porReserva` devuelve `503` si SOAP falla**, en vez de `200` con datos `N/A`.
+6. **`store` valida la entrada** (`id_reserva` como texto acotado, `concepto`, `monto`) antes de llamar a SOAP.
+7. **`ext-soap` y `ext-pdo_mysql`** están declaradas en `composer.json`.
+8. **`WSDL_CACHE_NONE` se referencia como `\WSDL_CACHE_NONE`** y la extensión está cargada.
+9. **`.env.example` y `APP_URL`** reflejan el proyecto; se eliminaron `SOAP_URL` y `SOAP_SECRET_KEY`.
+10. **`/api/user` duplicado eliminado**; queda solo `/api/me`, que ahora incluye `rol`.
+11. **Autorización por rol implementada en REST y en SOAP** (ver secciones 3.4 y 4.1).
+12. **Cambio de rol revoca tokens** en Laravel y en `hotel_db`.
 
-### Prioridad media
+### 11.2 Pendientes
 
-6. **`.env.example` apunta a `DB_DATABASE=laravel`** y conserva `APP_NAME=Laravel`; no refleja el proyecto.
-7. **`APP_URL` no coincide con `base_url` de Postman** (`localhost` vs `hotel-consumos-api.test`).
-8. **`monto` se devuelve como string** en las respuestas de `store`, `porReserva` y `pagar` (MySQL devuelve `decimal` como string), mientras que `checkout-status` lo convierte a `float`. Inconsistencia de tipos para el cliente.
-9. **`porReserva` responde `200` con `N/A`/`Desconocido`** si SOAP falla, ocultando el problema.
-10. **`id_reserva` solo tiene `required`.** No valida tipo ni longitud; un array o un valor enorme puede llegar a la consulta.
-11. **Semántica HTTP inconsistente:** "ya pagado" devuelve `400` en vez de `409`; las respuestas usan a veces `mensaje` y a veces `error`.
-12. **Sin paginación** en `GET /api/consumos/reserva/{id}`; con muchas reservas la respuesta crece sin límite.
-13. **`SoapService` depende de `request()`.** No se puede reutilizar desde un job o comando, y las pruebas requieren contexto HTTP.
-14. **`obtenerReserva` descarga todas las reservas y filtra en PHP**, en lugar de pedir una por ID. Es un problema de rendimiento si la tabla crece.
-15. **Cobertura incompleta del pago** y de los caminos de error de SOAP.
-16. **Tokens sin expiración** (`sanctum.expiration = null`) y solo el throttle global de 60 req/min; no hay límite específico de intentos de login.
-17. **Zona horaria `UTC`** en `config/app.php`; si el hotel opera en hora local, las fechas de `fecha_registro` y `fecha_pago` no coinciden con la operación.
-18. **Las pruebas dependen de MySQL real** (`hotel_consumos_api_test`) y de la carpeta hermana `C:\laragon\www\hotel`.
+**Prioridad alta**
 
-### Prioridad baja
+1. **Sincronización distribuida sin transacción.** La escritura en `hotel_db` ocurre fuera de la transacción de Laravel. Si el commit local falla después de escribir el token remoto, ambas bases quedan desalineadas. Mitigado en parte: si falla la sincronización, el login devuelve `503` y revierte lo local; el caso residual exige reintentar el login.
+2. **Credenciales en texto plano.** `.env` y el entorno Postman contienen contraseñas reales y los cuatro usuarios comparten `123456`. El tipo `secret` de Postman solo las oculta en la interfaz. `.env` está en `.gitignore`.
 
-19. `composer.json` conserva nombre y descripción de Laravel y **no declara `ext-soap` ni `ext-pdo_mysql`** como requisitos.
-20. El log histórico muestra `Undefined constant "App\Services\WSDL_CACHE_NONE"` (29-oct): en ese momento la extensión `soap` no estaba cargada. Hoy sí lo está, pero conviene referenciar `\WSDL_CACHE_NONE` y declarar `ext-soap`.
-21. `laravel/sail` está instalado pero no hay configuración Docker en el proyecto.
-22. El log también registra `Command "server" is not defined` (05-nov): alguien ejecutó `php artisan server` en vez de `php artisan serve`. Es ruido, no un bug de código.
+**Prioridad media**
+
+3. **Semántica HTTP:** "ya pagado" devuelve `400` en vez de `409`; las respuestas usan a veces `mensaje` y a veces `error`. Cambiar el `400` a `409` está identificado pero no autorizado todavía.
+4. **Sin paginación** en `GET /api/consumos/reserva/{id}`.
+5. **`SoapService` depende de `request()`**; no se puede reutilizar desde un job o comando.
+6. **`obtenerReserva` descarga todas las reservas y filtra en PHP**, en lugar de pedir una por ID.
+7. **Tokens sin expiración** y solo el throttle global de 60 req/min; no hay límite específico de intentos de login.
+8. **Zona horaria `UTC`** en `config/app.php`; si el hotel opera en hora local, `fecha_registro` y `fecha_pago` no coinciden con la operación. El cambio está identificado pero no confirmado.
+9. **Las pruebas dependen de MySQL real** (`hotel_consumos_api_test`) y de la carpeta hermana `C:\laragon\www\hotel`.
+10. **`composer audit` reporta 12 avisos en 6 paquetes.** No se actualizaron dependencias para no alterar el entorno del curso.
+
+**Prioridad baja**
+
+11. `laravel/sail` está instalado pero no hay configuración Docker.
+12. `tests/Unit/ExampleTest.php` y `tests/Feature/ExampleTest.php` son scaffold sin cobertura de dominio.
+13. El log histórico muestra errores de octubre y noviembre (`server` en vez de `serve`, `WSDL_CACHE_NONE` sin extensión). Son ruido anterior a las correcciones.
 
 ---
 
 ## 12. Recomendación de limpieza
 
-**Seguro de eliminar o corregir:**
+**Ya aplicado:**
+
+- `.env.example`, `APP_URL` y eliminación de `SOAP_URL`/`SOAP_SECRET_KEY`.
+- Eliminación de la ruta duplicada `/api/user`.
+- README del proyecto en lugar del genérico de Laravel.
+- `DatabaseSeeder` conectado a `UsuarioRolSeeder`.
+- `hotel_db.sql` con la tabla `usuarios` y su columna `role`.
+
+**Sigue vigente:**
 
 - `tests/Unit/ExampleTest.php` y `tests/Feature/ExampleTest.php`.
-- `UsuarioSoapSeeder` (o conectarlo desde `DatabaseSeeder`).
+- `UsuarioSoapSeeder` (o eliminarlo, o conectarlo si aún se necesita).
 - Migraciones de `password_reset_tokens` y `failed_jobs` si no se van a usar esas funciones.
 - `TrustHosts`, `RedirectIfAuthenticated` y `ValidateSignature` si no se van a usar.
-- `SOAP_URL` y `SOAP_SECRET_KEY` del `.env`.
 - Relaciones `Consumo::pagos()` y `PagoConsumo::consumo()` si no se van a exponer.
-- `HasFactory` en `Consumo` y `PagoConsumo` hasta que existan sus factories.
-- Ruta duplicada `/api/user` (o mantenerla conscientemente por compatibilidad).
-- README de Laravel, reemplazándolo por uno del proyecto.
 
-**Conservar:** middleware y providers estándar, configuración del framework, `users` y `personal_access_tokens`, `postman/`, las pruebas reales y `CrearUsuarioSoap`.
+**Conservar:** middleware y providers estándar, configuración del framework, `users` y `personal_access_tokens`, los middlewares de rol, `postman/`, las pruebas reales y `CrearUsuarioSoap`.
 
 ---
 
-## 13. Alcance de esta revisión
+## 13. Alcance de esta actualización
 
-- **No se modificó ningún archivo.**
-- Solo se ejecutaron lecturas y consultas: `route:list`, `migrate:status`, `php -m`, `SHOW TABLES`, `DESCRIBE usuarios` y `COUNT(*)`.
-- No se ejecutó la suite de pruebas para no alterar la base `hotel_consumos_api_test`.
+- Se modificaron ambos proyectos con autorización expresa: `hotel-consumos-api` y `C:\laragon\www\hotel`.
+- Cambios respaldados antes de empezar en `C:\laragon\www\_respaldos\2026-11-11\`.
+- Git inicializado/verificado en los dos proyectos con etiqueta base `linea-base`.
+- Se ejecutaron migraciones y seeders en la base de desarrollo y la suite completa de pruebas.
+- Verificación manual de extremo a extremo con los cuatro roles, por REST y por SOAP.
 
 ---
 
-## 14. Pendiente
+## 14. Roles implementados
 
-Queda pendiente el análisis de los nuevos requerimientos enviados por la profesora (perfiles `administrador`, `servicio_habitacion`, `cajero`, `recepcionista`, middlewares `IsAdministrator`, `CanRegisterConsumptions`, `CanProcessPayments`, `CanCheckOut`, y el control de acceso por rol con respuestas `401`/`403`). Ese análisis se agregará a este documento cuando se autorice.
+| Requisito de la profesora | Estado |
+|---|---|
+| Cuatro perfiles (`administrador`, `servicio_habitacion`, `cajero`, `recepcionista`) | Implementado en `users.role` y en `hotel_db.usuarios.role` |
+| Middleware `IsAdministrator` | Implementado y registrado (sin ruta exclusiva, variante A1) |
+| Middleware `CanRegisterConsumptions` | Implementado y aplicado a `POST /api/consumos` |
+| Middleware `CanProcessPayments` | Implementado y aplicado a `POST /api/consumos/{id}/pagar` |
+| Middleware `CanCheckOut` | Implementado y aplicado a `GET /api/checkout-status/{id}` |
+| Middleware `CanConsultAccount` | Implementado y aplicado a `GET /api/consumos/reserva/{id}` |
+| Control por accion y no por dato | El middleware decide antes del controlador; el rol no se lee del body |
+| `401` sin token / `403` sin permiso | Verificado en REST y en SOAP |
+| Cuerpo exacto del `403` | `{"error":"Permisos insuficientes para ejecutar este método"}` |
+| Rol `null` bloqueado | `lenin@hotel.test` y `prueba@hotel.test` reciben `403` |
+| Autorización en SOAP | Mapa por rol; operaciones desconocidas denegadas por defecto |
+| Cambio de rol | Revoca tokens y exige login nuevo |
+
+**Pendiente de autorización:** cambiar el `400` de "ya pagado" a `409` y ajustar la zona horaria a la del hotel.
