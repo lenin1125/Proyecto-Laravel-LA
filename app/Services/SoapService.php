@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Exceptions\SoapUnavailableException;
+use App\Models\User;
 use Illuminate\Support\Facades\Log;
 use SoapClient;
 use Throwable;
@@ -40,11 +42,10 @@ class SoapService
         $this->timeout = $timeout > 0 ? $timeout : 15;
     }
 
-    public function crearClienteConToken(): SoapClient
+    public function crearClienteConToken(?User $usuario = null, ?string $token = null): SoapClient
     {
-        $request = request();
-        $usuario = $request->user();
-        $token = $request->bearerToken();
+        $usuario ??= request()->user();
+        $token ??= request()->bearerToken();
         if (! $usuario || ! $token) {
             throw new \RuntimeException('Se requiere el token del usuario autenticado para consultar SOAP.');
         }
@@ -53,7 +54,7 @@ class SoapService
             'location' => $this->serviceUrl,
             'exceptions' => true,
             'connection_timeout' => $this->timeout,
-            'cache_wsdl' => WSDL_CACHE_NONE,
+            'cache_wsdl' => \WSDL_CACHE_NONE,
             'stream_context' => stream_context_create(['http' => ['timeout' => $this->timeout]]),
         ]);
         $ns = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd';
@@ -66,48 +67,51 @@ class SoapService
         return $client;
     }
 
-    public function obtenerReserva($idReserva)
+    public function obtenerReserva($idReserva, ?User $usuario = null, ?string $token = null)
     {
         try {
-            $client = $this->crearClienteConToken();
+            $client = $this->crearClienteConToken($usuario, $token);
 
             $respuesta = $client->consultarReservas();
-
-            if (is_string($respuesta)) {
-                $decoded = json_decode($respuesta, true);
-
-                if (json_last_error() === JSON_ERROR_NONE) {
-                    $respuesta = $decoded;
-                }
-            }
-
-            if (is_array($respuesta) && isset($respuesta['id'])) {
-                $reservas = [$respuesta];
-            } elseif (is_array($respuesta)) {
-                $reservas = $respuesta;
-            } else {
-                $reservas = [$respuesta];
-            }
-
-            foreach ($reservas as $reserva) {
-                if (is_array($reserva)) {
-                    $reservaObj = (object) $reserva;
-                } elseif (is_object($reserva)) {
-                    $reservaObj = $reserva;
-                } else {
-                    continue;
-                }
-
-                if (isset($reservaObj->id) && (string) $reservaObj->id === (string) $idReserva) {
-                    return $reservaObj;
-                }
-            }
-
-            return null;
+        } catch (\RuntimeException $e) {
+            // Falta el token o el usuario: es un error de uso, no una caida del servicio.
+            throw $e;
         } catch (Throwable $e) {
             Log::warning('SOAP consultarReservas fallido: '.$e->getMessage());
 
-            return null;
+            throw new SoapUnavailableException('El servicio SOAP no esta disponible.', 0, $e);
         }
+
+        if (is_string($respuesta)) {
+            $decoded = json_decode($respuesta, true);
+
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $respuesta = $decoded;
+            }
+        }
+
+        if (is_array($respuesta) && isset($respuesta['id'])) {
+            $reservas = [$respuesta];
+        } elseif (is_array($respuesta)) {
+            $reservas = $respuesta;
+        } else {
+            $reservas = [$respuesta];
+        }
+
+        foreach ($reservas as $reserva) {
+            if (is_array($reserva)) {
+                $reservaObj = (object) $reserva;
+            } elseif (is_object($reserva)) {
+                $reservaObj = $reserva;
+            } else {
+                continue;
+            }
+
+            if (isset($reservaObj->id) && (string) $reservaObj->id === (string) $idReserva) {
+                return $reservaObj;
+            }
+        }
+
+        return null;
     }
 }

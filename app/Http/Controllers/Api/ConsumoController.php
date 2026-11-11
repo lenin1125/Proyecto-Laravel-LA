@@ -2,11 +2,13 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Exceptions\SoapUnavailableException;
 use App\Http\Controllers\Controller;
 use App\Models\Consumo;
 use App\Models\PagoConsumo;
 use App\Services\SoapService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ConsumoController extends Controller
 {
@@ -23,14 +25,20 @@ class ConsumoController extends Controller
      */
     public function store(Request $request)
     {
-        $request->validate([
-            'id_reserva' => 'required',
-            'concepto'   => 'required|string|max:255',
-            'monto'      => 'required|numeric|min:0.01',
+        $datos = $request->validate([
+            'id_reserva' => ['required', 'string', 'max:50'],
+            'concepto'   => ['required', 'string', 'max:255'],
+            'monto'      => ['required', 'numeric', 'min:0.01', 'max:99999999.99'],
         ]);
 
         // Validación con el servicio SOAP
-        $reserva = $this->soapService->obtenerReserva($request->id_reserva);
+        try {
+            $reserva = $this->soapService->obtenerReserva($datos['id_reserva']);
+        } catch (SoapUnavailableException $e) {
+            return response()->json([
+                'error' => 'El servicio SOAP no esta disponible'
+            ], 503);
+        }
 
         if (!$reserva) {
             return response()->json([
@@ -48,9 +56,9 @@ class ConsumoController extends Controller
 
         // Guardar consumo en MySQL
         $consumo = Consumo::create([
-            'id_reserva' => $request->id_reserva,
-            'concepto'   => $request->concepto,
-            'monto'      => $request->monto,
+            'id_reserva' => $datos['id_reserva'],
+            'concepto'   => $datos['concepto'],
+            'monto'      => $datos['monto'],
             'estado'     => 'Pendiente',
         ]);
 
@@ -70,7 +78,13 @@ class ConsumoController extends Controller
         $consumos = Consumo::where('id_reserva', $id_reserva)->get();
 
         // Consultar detalle en SOAP para composición de datos
-        $reservaSoap = $this->soapService->obtenerReserva($id_reserva);
+        try {
+            $reservaSoap = $this->soapService->obtenerReserva($id_reserva);
+        } catch (SoapUnavailableException $e) {
+            return response()->json([
+                'error' => 'El servicio SOAP no esta disponible'
+            ], 503);
+        }
 
         return response()->json([
             'id_reserva'        => $id_reserva,
@@ -87,35 +101,49 @@ class ConsumoController extends Controller
      */
     public function pagar(Request $request, $id)
     {
-        $request->validate([
+        $datos = $request->validate([
             'metodo_pago' => 'required|string|in:Efectivo,Tarjeta,Cargo a la habitación',
         ]);
 
-        $consumo = Consumo::find($id);
+        // Todo el pago ocurre dentro de una transaccion y con la fila bloqueada.
+        $resultado = DB::transaction(function () use ($id, $datos) {
+            $consumo = Consumo::whereKey($id)->lockForUpdate()->first();
 
-        if (!$consumo) {
-            return response()->json(['error' => 'Consumo no encontrado'], 404);
-        }
+            if (!$consumo) {
+                return [
+                    'codigo' => 404,
+                    'cuerpo' => ['error' => 'Consumo no encontrado'],
+                ];
+            }
 
-        if ($consumo->estado === 'Pagado') {
-            return response()->json(['mensaje' => 'Este consumo ya se encuentra pagado'], 400);
-        }
+            if ($consumo->estado === 'Pagado') {
+                return [
+                    'codigo' => 400,
+                    'cuerpo' => ['mensaje' => 'Este consumo ya se encuentra pagado'],
+                ];
+            }
 
-        // Actualizar estado del consumo
-        $consumo->estado = 'Pagado';
-        $consumo->save();
+            // Actualizar estado del consumo
+            $consumo->estado = 'Pagado';
+            $consumo->save();
 
-        // Registrar el pago
-        $pago = PagoConsumo::create([
-            'consumo_id'  => $consumo->id,
-            'metodo_pago' => $request->metodo_pago,
-        ]);
+            // Registrar el pago en la misma transaccion
+            $pago = PagoConsumo::create([
+                'consumo_id'  => $consumo->id,
+                'metodo_pago' => $datos['metodo_pago'],
+            ]);
 
-        return response()->json([
-            'mensaje' => 'Pago realizado con éxito',
-            'consumo' => $consumo,
-            'pago'    => $pago
-        ], 200);
+            return [
+                'codigo' => 200,
+                'cuerpo' => [
+                    'mensaje' => 'Pago realizado con éxito',
+                    'consumo' => $consumo,
+                    'pago'    => $pago,
+                ],
+            ];
+        });
+
+        return response()->json($resultado['cuerpo'], $resultado['codigo']);
     }
 
     /**

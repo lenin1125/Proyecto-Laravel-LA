@@ -19,6 +19,15 @@ class Consumo extends Model
         'fecha_registro',
     ];
 
+    /**
+     * Mantiene el monto como numero en las respuestas JSON.
+     *
+     * @var array<string, string>
+     */
+    protected $casts = [
+        'monto' => 'float',
+    ];
+
     // Relación uno a muchos con Pagos
     public function pagos()
     {
