@@ -74,8 +74,9 @@ class HotelUsuarioSync
      * @param  string  $usuario  Correo que se usara como nombre de usuario.
      * @param  string  $passwordHash  Hash de la contrasena del usuario.
      * @param  string  $token  Token emitido por Laravel Sanctum.
+     * @param  string|null  $role  Rol que el servidor SOAP usara para autorizar.
      */
-    public function sincronizar(string $usuario, string $passwordHash, string $token): void
+    public function sincronizar(string $usuario, string $passwordHash, string $token, ?string $role = null): void
     {
         // Abre la conexion contra la base de datos del servidor SOAP.
         $pdo = $this->conexion();
@@ -94,11 +95,11 @@ class HotelUsuarioSync
         if ($existente !== false) {
             // Actualiza el hash de la contrasena y el token vigente.
             $update = $pdo->prepare(
-                'UPDATE usuarios SET password = ?, api_token = ? WHERE id = ?'
+                'UPDATE usuarios SET password = ?, api_token = ?, role = ? WHERE id = ?'
             );
 
             // Ejecuta la actualizacion sobre el registro encontrado.
-            $update->execute([$passwordHash, $token, (int) $existente['id']]);
+            $update->execute([$passwordHash, $token, $role, (int) $existente['id']]);
 
             // Termina la sincronizacion porque el usuario ya existia.
             return;
@@ -106,12 +107,12 @@ class HotelUsuarioSync
 
         // Inserta un usuario nuevo con su token asociado.
         $insert = $pdo->prepare(
-            'INSERT INTO usuarios (username, password, api_token, created_at)
-             VALUES (?, ?, ?, NOW())'
+            'INSERT INTO usuarios (username, password, api_token, role, created_at)
+             VALUES (?, ?, ?, ?, NOW())'
         );
 
         // Ejecuta la insercion del usuario en hotel_db.
-        $insert->execute([$usuario, $passwordHash, $token]);
+        $insert->execute([$usuario, $passwordHash, $token, $role]);
     }
 
     /**

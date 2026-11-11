@@ -31,7 +31,7 @@ class AuthController extends Controller
                 $usuario = User::whereKey($usuario->id)->lockForUpdate()->firstOrFail();
                 $usuario->tokens()->delete();
                 $token = $usuario->createToken($datos['dispositivo'] ?? 'soapui')->plainTextToken;
-                $sync->sincronizar($usuario->email, $usuario->password, $token);
+                $sync->sincronizar($usuario->email, $usuario->password, $token, $usuario->role);
 
                 return $token;
             });
@@ -43,7 +43,7 @@ class AuthController extends Controller
 
         return response()->json([
             'mensaje' => 'Autenticacion exitosa.',
-            'usuario' => ['id' => $usuario->id, 'nombre' => $usuario->name, 'email' => $usuario->email],
+            'usuario' => ['id' => $usuario->id, 'nombre' => $usuario->name, 'email' => $usuario->email, 'rol' => $usuario->role],
             'token' => $token,
             'token_type' => 'Bearer',
             'soap_username' => $usuario->email,
@@ -56,7 +56,7 @@ class AuthController extends Controller
     {
         $usuario = $request->user();
 
-        return response()->json(['id' => $usuario->id, 'nombre' => $usuario->name, 'email' => $usuario->email, 'soap_username' => $usuario->email]);
+        return response()->json(['id' => $usuario->id, 'nombre' => $usuario->name, 'email' => $usuario->email, 'rol' => $usuario->role, 'soap_username' => $usuario->email]);
     }
 
     public function logout(Request $request, HotelUsuarioSync $sync): JsonResponse

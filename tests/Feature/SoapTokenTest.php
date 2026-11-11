@@ -19,8 +19,9 @@ class SoapTokenTest extends TestCase
     {
         parent::setUp();
         require_once dirname(__DIR__, 3).'/hotel/auth.php';
+        $GLOBALS['soap_cuerpo_solicitud'] = '';
         $this->soapDb = new PDO('sqlite::memory:');
-        $this->soapDb->exec('CREATE TABLE usuarios (username TEXT PRIMARY KEY, api_token TEXT)');
+        $this->soapDb->exec('CREATE TABLE usuarios (username TEXT PRIMARY KEY, api_token TEXT, role TEXT)');
     }
 
     private function xml(string $usuario, string $token): string
@@ -35,7 +36,7 @@ class SoapTokenTest extends TestCase
         User::factory()->create(['email' => 'ana@test.com', 'password' => Hash::make('password')]);
         $this->mock(HotelUsuarioSync::class, function ($mock) {
             $mock->shouldReceive('sincronizar')->twice()->andReturnUsing(function ($email, $password, $token): void {
-                $this->soapDb->prepare('INSERT OR REPLACE INTO usuarios VALUES (?, ?)')->execute([$email, hash('sha256', $token)]);
+                $this->soapDb->prepare('INSERT OR REPLACE INTO usuarios (username, api_token) VALUES (?, ?)')->execute([$email, hash('sha256', $token)]);
             });
             $mock->shouldReceive('revocar')->once()->andReturnUsing(function ($email, $token): void {
                 $this->soapDb->prepare('UPDATE usuarios SET api_token = NULL WHERE username = ? AND api_token = ?')->execute([$email, hash('sha256', $token)]);
@@ -59,6 +60,90 @@ class SoapTokenTest extends TestCase
         $this->assertFalse(validarUsuarioTokenBD('ana@test.com', $nuevo, $this->soapDb));
         auth()->forgetGuards();
         $this->withToken($nuevo)->getJson('/api/me')->assertUnauthorized();
+    }
+
+    /**
+     * El token correcto no basta: el rol decide que operacion SOAP se ejecuta.
+     */
+    public function test_el_rol_limita_las_operaciones_soap(): void
+    {
+        // Cada fila es un usuario valido con su rol.
+        $filas = [
+            ['admin@test.com', 'administrador'],
+            ['servicio@test.com', 'servicio_habitacion'],
+            ['cajero@test.com', 'cajero'],
+            ['recepcion@test.com', 'recepcionista'],
+            ['sinrol@test.com', null],
+        ];
+
+        $token = '1|tokenDePrueba';
+
+        // Guarda el token y el rol como los dejaria un login.
+        $stmt = $this->soapDb->prepare('INSERT INTO usuarios (username, api_token, role) VALUES (?, ?, ?)');
+        foreach ($filas as [$email, $rol]) {
+            $stmt->execute([$email, hash('sha256', $token), $rol]);
+        }
+
+        // Prepara el sobre SOAP que auth.php lee desde el global.
+        $autenticado = fn (string $email): string => $this->xml($email, $token);
+
+        // El administrador puede las seis operaciones.
+        $GLOBALS['soap_cuerpo_solicitud'] = $autenticado('admin@test.com');
+        foreach (operacionesSOAPConocidas() as $operacion) {
+            $this->assertTrue(
+                autorizarOperacionSOAP($operacion, $this->soapDb),
+                "El administrador deberia poder ejecutar {$operacion}."
+            );
+        }
+
+        // Servicio de habitacion solo consulta reservas.
+        $GLOBALS['soap_cuerpo_solicitud'] = $autenticado('servicio@test.com');
+        $this->assertTrue(autorizarOperacionSOAP('consultarReservas', $this->soapDb));
+        foreach (['registrarHabitacion', 'consultarHabitacion', 'listarHabitaciones', 'actualizarHabitacion', 'registrarReserva'] as $operacion) {
+            $this->assertFalse(autorizarOperacionSOAP($operacion, $this->soapDb));
+        }
+
+        // Recepcion consulta habitaciones y reservas, no modifica nada.
+        $GLOBALS['soap_cuerpo_solicitud'] = $autenticado('recepcion@test.com');
+        foreach (['consultarHabitacion', 'listarHabitaciones', 'consultarReservas'] as $operacion) {
+            $this->assertTrue(autorizarOperacionSOAP($operacion, $this->soapDb));
+        }
+        foreach (['registrarHabitacion', 'actualizarHabitacion', 'registrarReserva'] as $operacion) {
+            $this->assertFalse(autorizarOperacionSOAP($operacion, $this->soapDb));
+        }
+
+        // El cajero no tiene ninguna operacion SOAP.
+        $GLOBALS['soap_cuerpo_solicitud'] = $autenticado('cajero@test.com');
+        foreach (operacionesSOAPConocidas() as $operacion) {
+            $this->assertFalse(autorizarOperacionSOAP($operacion, $this->soapDb));
+        }
+
+        // Sin rol tampoco entra.
+        $GLOBALS['soap_cuerpo_solicitud'] = $autenticado('sinrol@test.com');
+        $this->assertFalse(autorizarOperacionSOAP('consultarReservas', $this->soapDb));
+
+        // Un usuario sin token valido no obtiene rol ni permiso.
+        $GLOBALS['soap_cuerpo_solicitud'] = $this->xml('admin@test.com', '1|token-invalido');
+        $this->assertFalse(autorizarOperacionSOAP('consultarReservas', $this->soapDb));
+
+        // Una operacion desconocida se niega por defecto, incluso al admin.
+        $GLOBALS['soap_cuerpo_solicitud'] = $autenticado('admin@test.com');
+        $this->assertFalse(autorizarOperacionSOAP('borrarTodo', $this->soapDb));
+
+        $GLOBALS['soap_cuerpo_solicitud'] = '';
+    }
+
+    public function test_detecta_la_operacion_del_sobre_soap(): void
+    {
+        $sobre = fn (string $cuerpo): string => '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:HotelService">'
+            .'<soapenv:Body>'.$cuerpo.'</soapenv:Body></soapenv:Envelope>';
+
+        $this->assertSame('consultarReservas', obtenerOperacionSOAP($sobre('<urn:consultarReservas/>')));
+        $this->assertSame('registrarHabitacion', obtenerOperacionSOAP($sobre('<urn:registrarHabitacion><numero>10</numero></urn:registrarHabitacion>')));
+        $this->assertSame('listarHabitaciones', obtenerOperacionSOAP($sobre('<listarHabitaciones xmlns="urn:HotelService"/>')));
+        $this->assertNull(obtenerOperacionSOAP(''));
+        $this->assertNull(obtenerOperacionSOAP('<roto'));
+        $this->assertNull(obtenerOperacionSOAP($sobre('')));
     }
 
     public function test_no_acepta_token_en_body_ni_password_digest_ni_xml_invalido(): void

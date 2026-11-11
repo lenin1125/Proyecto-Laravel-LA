@@ -61,7 +61,7 @@ class AuthApiTest extends TestCase
             // Exige una sola llamada con el correo y el token recien emitido.
             $mock->shouldReceive('sincronizar')
                 ->once()
-                ->with($usuario->email, Mockery::type('string'), Mockery::type('string'));
+                ->with($usuario->email, Mockery::type('string'), Mockery::type('string'), $usuario->role);
         });
 
         // Envia el login con las credenciales correctas.

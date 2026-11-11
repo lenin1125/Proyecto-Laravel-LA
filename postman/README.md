@@ -1,104 +1,108 @@
-# Token de Laravel para Postman y SoapUI
+# Postman: token, roles y permisos
 
-Este directorio contiene dos archivos listos para importar en Postman:
+Este directorio contiene tres archivos listos para importar:
 
-- `Hotel API - Token para SoapUI.postman_collection.json`
-- `Hotel Local.postman_environment.json`
+- `Hotel API - Token para SoapUI.postman_collection.json`: flujo base de login, consumos y SOAP.
+- `Hotel API - Permisos por rol.postman_collection.json`: matriz de permisos de los cuatro roles.
+- `Hotel Local.postman_environment.json`: entorno compartido por las dos colecciones.
 
-## 1. Crear el usuario
+## 1. Usuarios de demostracion
 
-El usuario compartido entre Laravel y SoapUI se puede crear con el comando:
+| Rol | Correo | Contrasena |
+|---|---|---|
+| administrador | `administrador@hotel.test` | `123456` |
+| servicio_habitacion | `servicio@hotel.test` | `123456` |
+| cajero | `cajero@hotel.test` | `123456` |
+| recepcionista | `recepcionista@hotel.test` | `123456` |
+
+Se crean con:
 
 ```bash
-php artisan usuario:crear lenin@hotel.test 123456 --name=Lenin
+php artisan db:seed
 ```
 
-Credenciales usadas por la coleccion:
+O uno por uno:
 
-| Campo | Valor |
-|---|---|
-| Correo | `lenin@hotel.test` |
-| Contrasena | `123456` |
+```bash
+php artisan usuario:crear cajero@hotel.test 123456 --name=Cajero --role=cajero
+```
 
-El comando es idempotente: si el usuario ya existe, actualiza su contrasena.
+`123456` es una credencial de prueba. En un entorno real cada rol debe tener su
+propia contrasena.
 
-## 2. Importar en Postman
+`lenin@hotel.test` queda sin rol a proposito: puede iniciar sesion, pero recibe
+`403` en las cuatro acciones de negocio.
 
-1. Abre Postman.
-2. Importa la coleccion y el entorno.
-3. Selecciona el entorno `Hotel Local` en la esquina superior derecha.
-4. Si tu API no responde en `http://hotel-consumos-api.test`, cambia la variable `base_url`.
-5. Ejecuta `1. Autenticacion -> Login - genera token`.
+## 2. Matriz de permisos
 
-El script de pruebas guarda el token en la variable de entorno `soap_token` y el
-usuario en `soap_username`. En la consola de Postman veras ambos valores.
+| Accion | administrador | servicio_habitacion | cajero | recepcionista |
+|---|---|---|---|---|
+| Registrar consumo | si | si | no | no |
+| Consultar estado de cuenta | si | si | no | si |
+| Pagar consumo | si | no | si | no |
+| Verificar checkout | si | no | si | si |
 
-Despues del login puedes ejecutar la carpeta `2. API REST - Consumos`. Todas las
-peticiones de esa carpeta heredan la cabecera `Authorization: Bearer {{soap_token}}`.
+- Sin token: `401`.
+- Token valido sin permiso: `403` con `{"error":"Permisos insuficientes para ejecutar este método"}`.
+- El rol se lee de la base de datos, nunca del cuerpo de la peticion.
 
-La peticion `Sin token - debe responder 401` sirve para comprobar que la API ya no
-permite consultar consumos sin autenticacion.
+## 3. Importar y ejecutar
 
-## 3. Usar el token en SoapUI
+1. Abre Postman e importa los tres archivos.
+2. Selecciona el entorno `Hotel Local`.
+3. Si tu API no responde en `http://hotel-consumos-api.test`, cambia `base_url`.
+4. Ejecuta la carpeta `0. Login por rol`: guarda un token por rol en
+   `admin_token`, `servicio_token`, `cajero_token` y `recepcion_token`.
+5. Ejecuta la carpeta `1. Matriz de permisos`: son 16 peticiones, una por
+   combinacion de rol y accion.
+
+Cada peticion tiene su propia prueba:
+
+- Si el rol esta permitido, comprueba que la respuesta **no** sea `403`.
+- Si el rol no esta permitido, comprueba `403` y el cuerpo exacto.
+
+## 4. Coleccion base
+
+La coleccion `Hotel API - Token para SoapUI` sigue funcionando. Usa
+`soap_username` y `soap_password` del entorno, que por defecto apuntan al
+administrador, y guarda el token en `soap_token`.
+
+Para probar otro rol en esa coleccion, cambia `soap_username` por el correo del
+rol y vuelve a ejecutar el login.
+
+## 5. SoapUI
 
 1. Crea un proyecto SOAP con el WSDL:
    `http://127.0.0.1/hotel/server.php?wsdl`
-2. Abre la peticion `consultarReservas`.
-3. En la pestana `WS-Security Configurations` agrega una configuracion:
+2. Abre `consultarReservas`.
+3. En `WS-Security Configurations` agrega una configuracion:
    - Tipo: `Username`
-   - Username: `lenin@hotel.test`
-   - Password: el token que genero Postman
+   - Username: el correo del usuario
+   - Password: el token generado por el login
    - Password type: `PasswordText`
-4. Asocia esa configuracion a la peticion y ejecutala.
+4. Asocia la configuracion a la peticion y ejecutala.
 
 SoapUI solo necesita el usuario y el token. No envia la contrasena.
 
-## 4. Como funciona
+## 6. Como funciona
 
 1. `POST /api/login` valida el correo y la contrasena en Laravel.
-2. Laravel elimina los tokens anteriores y emite un token Sanctum nuevo.
-3. El usuario y el hash SHA-256 del token completo se copian a `hotel_db.usuarios`.
-4. `server.php` lee el `UsernameToken`, busca al usuario y compara el hash del token recibido.
-5. Si el par no coincide, responde `401 Unauthorized` con un SOAP Fault.
+2. Laravel elimina los tokens anteriores del usuario y emite uno nuevo.
+3. El usuario, su rol y el hash SHA-256 del token se copian a `hotel_db.usuarios`.
+4. `server.php` valida usuario y token, y ademas revisa que el rol pueda ejecutar
+   la operacion solicitada.
+5. Si el par usuario/token no coincide, responde `401`. Si el rol no tiene
+   permiso para esa operacion, responde `403`.
 
-El mismo token sirve para:
+## 7. Notas
 
-- `Authorization: Bearer {token}` en las rutas de la API.
-- `wsse:Username` + `wsse:Password` en el servidor SOAP.
-
-## 5. Rutas protegidas
-
-Todas estas rutas exigen token Bearer:
-
-| Metodo | Ruta |
-|---|---|
-| `POST` | `/api/consumos` |
-| `GET` | `/api/consumos/reserva/{id_reserva}` |
-| `POST` | `/api/consumos/{id}/pagar` |
-| `GET` | `/api/checkout-status/{id_reserva}` |
-| `GET` | `/api/me` |
-| `POST` | `/api/logout` |
-
-`POST /api/login` es la unica ruta publica.
-
-## 6. Notas
-
-- Cada login revoca el token anterior. Si vuelves a iniciar sesion, copia el
-  token nuevo en SoapUI; el anterior deja de funcionar en ambas aplicaciones.
+- Cada login revoca el token anterior de ese usuario. Con cuatro usuarios puedes
+  mantener cuatro sesiones activas al mismo tiempo.
 - `POST /api/logout` revoca el token en Laravel y en `hotel_db`.
 - Laravel reenvia el mismo token de la peticion REST a SOAP en WS-Security.
-- Se retiraron HMAC, sus claves compartidas y la operacion `login` del WSDL SOAP.
-  El login se realiza exclusivamente en Laravel.
-- Los tokens antiguos almacenados en texto plano ya no se aceptan: vuelve a
-  iniciar sesion en Laravel para guardar su hash y recarga el WSDL en SoapUI.
-- Si SOAP no puede revocar el token, logout devuelve `503` y mantiene el token
-  local para permitir reintentar; no se anuncia un cierre exitoso.
-- Si falla la sincronizacion durante login, la transaccion local conserva el
-  token anterior. No existe una transaccion distribuida entre ambas bases:
-  un fallo de commit local posterior a una escritura remota requiere reintentar
-  el login para recuperar la sincronizacion.
-- `cliente.php` usa `SOAP_USERNAME` y `SOAP_TOKEN` del entorno, emitidos por Laravel.
-- La columna `usuarios.api_token` almacena un hash hexadecimal de 64 caracteres;
-  su longitud actual de 80 admite el cambio sin migracion de esquema.
-- Las pruebas automatizadas usan la base de datos `hotel_consumos_api_test` y
-  simulan la sincronizacion con `hotel_db`, por lo que no modifican datos reales.
+- Si falla la sincronizacion durante el login, la transaccion local conserva el
+  token anterior.
+- No existe una transaccion distribuida entre ambas bases: un fallo de commit
+  local posterior a una escritura remota requiere reintentar el login.
+- Las pruebas automatizadas usan `hotel_consumos_api_test` y no tocan los datos
+  reales de `hotel_db` salvo en las pruebas de integracion SOAP.
