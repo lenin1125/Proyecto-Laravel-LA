@@ -12,6 +12,21 @@ class User extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable;
 
+    public const ROLE_ADMIN = 'administrador';
+
+    public const ROLE_SERVICIO = 'servicio_habitacion';
+
+    public const ROLE_CAJERO = 'cajero';
+
+    public const ROLE_RECEPCION = 'recepcionista';
+
+    public const ROLES = [
+        self::ROLE_ADMIN,
+        self::ROLE_SERVICIO,
+        self::ROLE_CAJERO,
+        self::ROLE_RECEPCION,
+    ];
+
     /**
      * The attributes that are mass assignable.
      *
@@ -21,7 +36,18 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'role',
     ];
+
+    /**
+     * Indica si el usuario tiene alguno de los roles indicados.
+     *
+     * @param  array<int, string>  $roles
+     */
+    public function hasAnyRole(array $roles): bool
+    {
+        return $this->role !== null && in_array($this->role, $roles, true);
+    }
 
     /**
      * The attributes that should be hidden for serialization.

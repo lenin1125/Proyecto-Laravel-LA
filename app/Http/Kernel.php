@@ -63,5 +63,12 @@ class Kernel extends HttpKernel
         'signed' => \App\Http\Middleware\ValidateSignature::class,
         'throttle' => \Illuminate\Routing\Middleware\ThrottleRequests::class,
         'verified' => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
+
+        // Middlewares de rol del proyecto.
+        'IsAdministrator' => \App\Http\Middleware\IsAdministrator::class,
+        'CanRegisterConsumptions' => \App\Http\Middleware\CanRegisterConsumptions::class,
+        'CanConsultAccount' => \App\Http\Middleware\CanConsultAccount::class,
+        'CanProcessPayments' => \App\Http\Middleware\CanProcessPayments::class,
+        'CanCheckOut' => \App\Http\Middleware\CanCheckOut::class,
     ];
 }

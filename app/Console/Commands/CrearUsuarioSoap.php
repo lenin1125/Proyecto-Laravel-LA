@@ -9,8 +9,14 @@ use App\Models\User;
 // Importa el comando base de Laravel.
 use Illuminate\Console\Command;
 
+// Importa el servicio que sincroniza el usuario con el servidor SOAP.
+use App\Services\HotelUsuarioSync;
+
 // Importa el facade Hash para cifrar la contrasena.
 use Illuminate\Support\Facades\Hash;
+
+// Importa Throwable para no detener el comando si SOAP no responde.
+use Throwable;
 
 /**
  * Comando que crea o actualiza el usuario compartido entre Laravel y SoapUI.
@@ -29,7 +35,8 @@ class CrearUsuarioSoap extends Command
     protected $signature = 'usuario:crear
                             {email : Correo electronico del usuario}
                             {password : Contrasena en texto plano}
-                            {--name= : Nombre visible del usuario}';
+                            {--name= : Nombre visible del usuario}
+                            {--role= : Rol del usuario (administrador, servicio_habitacion, cajero, recepcionista)}';
 
     /**
      * Descripcion que aparece en php artisan list.
@@ -72,8 +79,21 @@ class CrearUsuarioSoap extends Command
             return self::FAILURE;
         }
 
+        // Lee el rol opcional recibido con la opcion --role.
+        $rol = trim((string) $this->option('role'));
+
+        // Comprueba que el rol, si se envio, sea uno de los permitidos.
+        if ($rol !== '' && ! in_array($rol, User::ROLES, true)) {
+            $this->error('El rol no es valido. Valores permitidos: '.implode(', ', User::ROLES));
+
+            return self::FAILURE;
+        }
+
         // Busca el usuario por correo o prepara uno nuevo si no existe.
         $usuario = User::firstOrNew(['email' => $email]);
+
+        // Guarda el rol anterior para detectar cambios al final.
+        $rolAnterior = $usuario->role;
 
         // Indica si el usuario ya existia antes de ejecutar el comando.
         $yaExistia = $usuario->exists;
@@ -99,8 +119,26 @@ class CrearUsuarioSoap extends Command
             $usuario->email_verified_at = now();
         }
 
+        // Asigna el rol solo cuando se envio la opcion --role.
+        if ($rol !== '') {
+            $usuario->role = $rol;
+        }
+
         // Guarda el usuario en la base de datos de Laravel.
         $usuario->save();
+
+        // Si el rol cambio, invalida los pases para forzar un login nuevo.
+        if ($rolAnterior !== $usuario->role) {
+            $usuario->tokens()->delete();
+
+            try {
+                app(HotelUsuarioSync::class)->revocarTodos($usuario->email);
+            } catch (Throwable $e) {
+                $this->warn('No se pudo revocar el token en SOAP: '.$e->getMessage());
+            }
+
+            $this->line('El rol cambio: se cerraron las sesiones y se exigira un login nuevo.');
+        }
 
         // Muestra el resultado segun si el usuario ya existia o es nuevo.
         $this->info($yaExistia ? 'Usuario actualizado correctamente.' : 'Usuario creado correctamente.');
@@ -108,6 +146,9 @@ class CrearUsuarioSoap extends Command
         // Muestra el correo y la contrasena que se usaran en Postman.
         $this->line('Correo: ' . $usuario->email);
         $this->line('Contrasena: ' . $password);
+
+        // Muestra el rol asignado o advierte que el usuario queda bloqueado.
+        $this->line('Rol: ' . ($usuario->role ?? 'sin rol (bloqueado por los middlewares)'));
 
         // Explica el siguiente paso para obtener el token.
         $this->line('Siguiente paso: POST /api/login con ese correo y contrasena.');

@@ -1,8 +1,12 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ConsumoController;
+use App\Http\Middleware\CanCheckOut;
+use App\Http\Middleware\CanConsultAccount;
+use App\Http\Middleware\CanProcessPayments;
+use App\Http\Middleware\CanRegisterConsumptions;
+use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
@@ -46,14 +50,26 @@ Route::middleware('auth:sanctum')->post('/logout', [AuthController::class, 'logo
 */
 Route::middleware('auth:sanctum')->group(function () {
     // Registra un consumo nuevo despues de validar la reserva en SOAP.
-    Route::post('/consumos', [ConsumoController::class, 'store']);
+    // Permiten: administrador y servicio_habitacion.
+    Route::post('/consumos', [ConsumoController::class, 'store'])
+        ->middleware(CanRegisterConsumptions::class)
+        ->name('registrarConsumo');
 
     // Consulta los consumos de una reserva y los datos de la reserva en SOAP.
-    Route::get('/consumos/reserva/{id_reserva}', [ConsumoController::class, 'porReserva']);
+    // Permiten: administrador, servicio_habitacion y recepcionista.
+    Route::get('/consumos/reserva/{id_reserva}', [ConsumoController::class, 'porReserva'])
+        ->middleware(CanConsultAccount::class)
+        ->name('consultarEstadoCuenta');
 
     // Marca un consumo como pagado y registra el pago.
-    Route::post('/consumos/{id}/pagar', [ConsumoController::class, 'pagar']);
+    // Permiten: administrador y cajero.
+    Route::post('/consumos/{id}/pagar', [ConsumoController::class, 'pagar'])
+        ->middleware(CanProcessPayments::class)
+        ->name('pagarConsumo');
 
     // Indica si la reserva tiene saldo pendiente para el check-out.
-    Route::get('/checkout-status/{id_reserva}', [ConsumoController::class, 'checkoutStatus']);
+    // Permiten: administrador, cajero y recepcionista.
+    Route::get('/checkout-status/{id_reserva}', [ConsumoController::class, 'checkoutStatus'])
+        ->middleware(CanCheckOut::class)
+        ->name('verificarCheckout');
 });

@@ -128,4 +128,17 @@ class HotelUsuarioSync
         $update = $pdo->prepare('UPDATE usuarios SET api_token = NULL WHERE username = ? AND api_token = ?');
         $update->execute([$usuario, hash('sha256', $token)]);
     }
+
+    /**
+     * Anula cualquier token del usuario en el servidor SOAP.
+     *
+     * Se usa cuando cambia el rol: el pase viejo deja de ser valido y el
+     * usuario debe iniciar sesion de nuevo para recibir el rol actualizado.
+     */
+    public function revocarTodos(string $usuario): void
+    {
+        $pdo = $this->conexion();
+        $update = $pdo->prepare('UPDATE usuarios SET api_token = NULL WHERE username = ?');
+        $update->execute([$usuario]);
+    }
 }
