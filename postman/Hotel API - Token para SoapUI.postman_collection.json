@@ -1,0 +1,421 @@
+{
+    "info": {
+        "name": "Hotel API - Token para SoapUI",
+        "description": "Autenticacion de Laravel, consumo de la API REST protegida con Bearer y llamada SOAP con UsernameToken. El login guarda el usuario y el token en las variables soap_username y soap_token.",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "auth": {
+        "type": "bearer",
+        "bearer": [
+            {
+                "key": "token",
+                "value": "{{soap_token}}",
+                "type": "string"
+            }
+        ]
+    },
+    "variable": [
+        {
+            "key": "base_url",
+            "value": "http://hotel-consumos-api.test"
+        },
+        {
+            "key": "soap_url",
+            "value": "http://127.0.0.1/hotel/server.php"
+        }
+    ],
+    "item": [
+        {
+            "name": "1. Autenticacion",
+            "item": [
+                {
+                    "name": "Login - genera token",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/login",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "login"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"email\": \"{{soap_username}}\",\n  \"password\": \"{{soap_password}}\",\n  \"dispositivo\": \"postman\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "auth": {
+                            "type": "noauth"
+                        }
+                    },
+                    "response": [],
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "pm.test('Login correcto (200)', function () {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "var datos = pm.response.json();",
+                                    "",
+                                    "pm.test('La respuesta incluye un token', function () {",
+                                    "    pm.expect(datos.token).to.be.a('string').and.not.empty;",
+                                    "});",
+                                    "",
+                                    "pm.test('El token de la API y el de SoapUI son iguales', function () {",
+                                    "    pm.expect(datos.soap_token).to.eql(datos.token);",
+                                    "});",
+                                    "",
+                                    "if (datos.token) {",
+                                    "    pm.environment.set('soap_token', datos.token);",
+                                    "    pm.environment.set('soap_username', datos.soap_username);",
+                                    "    console.log('Token guardado en el entorno: ' + datos.token);",
+                                    "    console.log('Usuario para SoapUI: ' + datos.soap_username);",
+                                    "}"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "Perfil autenticado",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/api/me",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "me"
+                            ]
+                        }
+                    },
+                    "response": [],
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "pm.test('Perfil correcto (200)', function () {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "",
+                                    "pm.test('El perfil corresponde al usuario del token', function () {",
+                                    "    pm.expect(pm.response.json().soap_username).to.eql(pm.environment.get('soap_username'));",
+                                    "});"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "Cerrar sesion",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/api/logout",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "logout"
+                            ]
+                        }
+                    },
+                    "response": [],
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "pm.test('Logout correcto (200)', function () {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});",
+                                    "pm.environment.unset('soap_token');"
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "2. API REST - Consumos",
+            "description": "Todas las peticiones de esta carpeta usan el token Bearer guardado por el login.",
+            "item": [
+                {
+                    "name": "Consultar consumos de una reserva",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/api/consumos/reserva/1",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "consumos",
+                                "reserva",
+                                "1"
+                            ]
+                        }
+                    },
+                    "response": [],
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "pm.test('Consulta autorizada (200)', function () {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "Registrar consumo",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/consumos",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "consumos"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"id_reserva\": \"1\",\n  \"concepto\": \"Consumo desde Postman\",\n  \"monto\": 15000\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    },
+                    "response": [],
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "pm.test('Consumo creado (201)', function () {",
+                                    "    pm.response.to.have.status(201);",
+                                    "});",
+                                    "",
+                                    "var datos = pm.response.json();",
+                                    "",
+                                    "if (datos.consumo && datos.consumo.id) {",
+                                    "    pm.environment.set('consumo_id', datos.consumo.id);",
+                                    "    console.log('Consumo guardado en el entorno: ' + datos.consumo.id);",
+                                    "}"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "Pagar consumo",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/consumos/{{consumo_id}}/pagar",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "consumos",
+                                "{{consumo_id}}",
+                                "pagar"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"metodo_pago\": \"Efectivo\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    },
+                    "response": [],
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "pm.test('Pago autorizado (200 o 400 si ya estaba pagado)', function () {",
+                                    "    pm.expect([200, 400]).to.include(pm.response.code);",
+                                    "});"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "Estado de checkout",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/api/checkout-status/1",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "checkout-status",
+                                "1"
+                            ]
+                        }
+                    },
+                    "response": [],
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "pm.test('Checkout autorizado (200)', function () {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "Sin token - debe responder 401",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/api/checkout-status/1",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "checkout-status",
+                                "1"
+                            ]
+                        },
+                        "auth": {
+                            "type": "noauth"
+                        }
+                    },
+                    "response": [],
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "pm.test('Sin token la API responde 401', function () {",
+                                    "    pm.response.to.have.status(401);",
+                                    "});"
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "3. SOAP - UsernameToken",
+            "item": [
+                {
+                    "name": "consultarReservas con usuario y token",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "text/xml; charset=utf-8"
+                            },
+                            {
+                                "key": "SOAPAction",
+                                "value": "\"urn:HotelService#consultarReservas\""
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{soap_url}}"
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:urn=\"urn:HotelService\">\n   <soapenv:Header>\n      <wsse:Security xmlns:wsse=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd\">\n         <wsse:UsernameToken>\n            <wsse:Username>{{soap_username}}</wsse:Username>\n            <wsse:Password>{{soap_token}}</wsse:Password>\n         </wsse:UsernameToken>\n      </wsse:Security>\n   </soapenv:Header>\n   <soapenv:Body>\n      <urn:consultarReservas/>\n   </soapenv:Body>\n</soapenv:Envelope>",
+                            "options": {
+                                "raw": {
+                                    "language": "xml"
+                                }
+                            }
+                        },
+                        "auth": {
+                            "type": "noauth"
+                        }
+                    },
+                    "response": [],
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "pm.test('SOAP respondio 200', function () {",
+                                    "    pm.response.to.have.status(200);",
+                                    "});"
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
