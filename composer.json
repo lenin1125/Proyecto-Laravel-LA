@@ -63,6 +63,16 @@
         "sort-packages": true,
         "allow-plugins": {
             "pestphp/pest-plugin": true
+        },
+        "policy": {
+            "advisories": {
+                "ignore": {
+                    "PKSA-3r5d-mb8f-1qw9": "Sin parche en Laravel 10. La app no envia correos y solo valida el email del login.",
+                    "PKSA-mdq4-51ck-6kdq": "Misma advisory de CRLF. Sin parche en Laravel 10; la app no envia correos.",
+                    "PKSA-m5cs-t1y6-qpcs": "Sin parche en Laravel 10. La app no usa URLs firmadas.",
+                    "PKSA-d5tc-s1qs-h781": "Sin parche en Laravel 10. En produccion APP_DEBUG debe ser false."
+                }
+            }
         }
     },
     "minimum-stability": "stable",

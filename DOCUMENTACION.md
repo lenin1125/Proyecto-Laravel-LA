@@ -27,7 +27,8 @@ API REST en **Laravel 10 / PHP 8.1** para registrar y cobrar consumos extras de 
 - `hotel_consumos_api`: 7 tablas.
 - `hotel_db`: 4 tablas (`habitacion`, `huesped`, `reserva`, `usuarios`).
 - Git inicializado en los dos proyectos; etiqueta base `linea-base` y commits por bloque.
-- 42 pruebas automatizadas en verde (174 aserciones).
+- 43 pruebas automatizadas en verde (176 aserciones).
+- Zona horaria `America/Bogota` (UTC-5), igual que el sistema y MySQL.
 
 ---
 
@@ -224,7 +225,7 @@ Todas las rutas están en `routes/api.php`. Prefijo `/api`.
 | POST | `/logout` | Bearer | cualquiera autenticado | Revoca token local y remoto | 200, 401, 503 |
 | POST | `/consumos` | Bearer | admin, servicio | Valida reserva en SOAP y registra consumo | 201, 400, 404, 422, 401, 403, 503 |
 | GET | `/consumos/reserva/{id_reserva}` | Bearer | admin, servicio, recepción | Consumos + datos de reserva desde SOAP | 200, 401, 403, 503 |
-| POST | `/consumos/{id}/pagar` | Bearer | admin, cajero | Marca consumo como pagado y registra pago | 200, 400, 404, 422, 401, 403 |
+| POST | `/consumos/{id}/pagar` | Bearer | admin, cajero | Marca consumo como pagado y registra pago | 200, 404, 409, 422, 401, 403 |
 | GET | `/checkout-status/{id_reserva}` | Bearer | admin, cajero, recepción | Saldo pendiente y paz y salvo | 200, 401, 403 |
 
 ### Reglas de negocio de consumos
@@ -237,7 +238,7 @@ Todas las rutas están en `routes/api.php`. Prefijo `/api`.
 - El estado de la reserva debe ser `activo` o `activa` (comparación en minúsculas) → si no, `400`.
 - El consumo se crea con estado `Pendiente`.
 - `pagar` acepta exactamente: `Efectivo`, `Tarjeta`, `Cargo a la habitación`.
-- Si ya está `Pagado` → `400` (semánticamente debería ser `409`).
+- Si ya esta `Pagado` → `409` (conflicto de estado, no peticion mal formada).
 - `checkout-status` suma solo consumos en estado `Pendiente`; si la suma es 0, `paz_y_salvo = true`.
 
 ---
@@ -339,11 +340,12 @@ Usuarios de demostración (`UsuarioRolSeeder`):
 | `tests/Feature/SoapFallbackTest.php` | 4 | SOAP caído devuelve `503` y no `404` |
 | `tests/Feature/SoapServiceTest.php` | 1 | Exige token para crear cliente SOAP |
 | `tests/Feature/SoapTokenTest.php` | 4 | Flujo real contra `C:\laragon\www\hotel\auth.php`, mapa de permisos SOAP, detección de la operación y formatos inválidos |
+| `tests/Feature/ZonaHorariaTest.php` | 1 | La app usa `America/Bogota` y un desfase de `-05:00` |
 | `tests/Unit/HotelUsuarioSyncTest.php` | 1 | Guarda SHA-256 y el rol, y revoca solo el token presentado |
 | `tests/Unit/ExampleTest.php` | 1 | `assertTrue(true)` — scaffold |
 | `tests/Feature/ExampleTest.php` | 1 | `GET /` responde 200 — scaffold |
 
-**Total: 42 pruebas, 174 aserciones, en verde.**
+**Total: 43 pruebas, 176 aserciones, en verde.**
 
 **No cubierto:** concurrencia real de pagos, expiración de tokens, cambio de rol a mitad de sesión (queda forzado por la revocación) y pruebas de carga.
 
@@ -398,7 +400,9 @@ Dentro de `config/services.php`, las secciones `mailgun`, `postmark` y `ses` no 
 
 ## 11. Hallazgos y riesgos técnicos
 
-### 11.1 Corregidos el 11/11/2026
+### 11.1 Corregidos
+
+**11/11/2026**
 
 1. **SOAP caído ya no se confunde con reserva inexistente.** `SoapService` lanza `SoapUnavailableException` y la API responde `503`; `404` queda para reserva realmente ausente.
 2. **`pagar()` es transaccional.** Va dentro de `DB::transaction` con `lockForUpdate`, así que no queda un consumo pagado sin registro de pago.
@@ -413,6 +417,12 @@ Dentro de `config/services.php`, las secciones `mailgun`, `postmark` y `ses` no 
 11. **Autorización por rol implementada en REST y en SOAP** (ver secciones 3.4 y 4.1).
 12. **Cambio de rol revoca tokens** en Laravel y en `hotel_db`.
 
+**12/11/2026**
+
+13. **"Ya pagado" devuelve `409 Conflict`** en vez de `400`. El cuerpo conserva la clave `mensaje`.
+14. **Zona horaria `America/Bogota`** (UTC-5), alineada con la hora del sistema y de MySQL. Los timestamps de Laravel y los valores por defecto de MySQL coinciden con la hora local del hotel.
+15. **Dependencias actualizadas:** `laravel/framework` 10.50.3 → 10.50.4 y componentes Symfony 6.4.46-6.4.48 → 6.4.49-6.4.50. Se corrigieron las advisories con parche disponible en esas ramas.
+
 ### 11.2 Pendientes
 
 **Prioridad alta**
@@ -422,20 +432,18 @@ Dentro de `config/services.php`, las secciones `mailgun`, `postmark` y `ses` no 
 
 **Prioridad media**
 
-3. **Semántica HTTP:** "ya pagado" devuelve `400` en vez de `409`; las respuestas usan a veces `mensaje` y a veces `error`. Cambiar el `400` a `409` está identificado pero no autorizado todavía.
-4. **Sin paginación** en `GET /api/consumos/reserva/{id}`.
-5. **`SoapService` depende de `request()`**; no se puede reutilizar desde un job o comando.
-6. **`obtenerReserva` descarga todas las reservas y filtra en PHP**, en lugar de pedir una por ID.
-7. **Tokens sin expiración** y solo el throttle global de 60 req/min; no hay límite específico de intentos de login.
-8. **Zona horaria `UTC`** en `config/app.php`; si el hotel opera en hora local, `fecha_registro` y `fecha_pago` no coinciden con la operación. El cambio está identificado pero no confirmado.
-9. **Las pruebas dependen de MySQL real** (`hotel_consumos_api_test`) y de la carpeta hermana `C:\laragon\www\hotel`.
-10. **`composer audit` reporta 12 avisos en 6 paquetes.** No se actualizaron dependencias para no alterar el entorno del curso.
+3. **Sin paginación** en `GET /api/consumos/reserva/{id}`.
+4. **`SoapService` depende de `request()`**; no se puede reutilizar desde un job o comando.
+5. **`obtenerReserva` descarga todas las reservas y filtra en PHP**, en lugar de pedir una por ID.
+6. **Tokens sin expiración** y solo el throttle global de 60 req/min; no hay límite específico de intentos de login.
+7. **Las pruebas dependen de MySQL real** (`hotel_consumos_api_test`) y de la carpeta hermana `C:\laragon\www\hotel`.
+8. **Advisories sin parche en Laravel 10.** `composer.json` declara `config.policy.advisories.ignore-id` para cuatro avisos que ninguna version 10.x corrige: CRLF en la regla `email`, path confusion en URLs firmadas, XSS en la pagina de debug y una variante del mismo CRLF. Mitigaciones: la app no envia correos ni usa URLs firmadas, y en produccion `APP_DEBUG` debe ser `false`. Actualizar a Laravel 11 o 12 requiere PHP 8.2 o superior (hoy hay 8.1.10).
 
 **Prioridad baja**
 
-11. `laravel/sail` está instalado pero no hay configuración Docker.
-12. `tests/Unit/ExampleTest.php` y `tests/Feature/ExampleTest.php` son scaffold sin cobertura de dominio.
-13. El log histórico muestra errores de octubre y noviembre (`server` en vez de `serve`, `WSDL_CACHE_NONE` sin extensión). Son ruido anterior a las correcciones.
+9. `laravel/sail` está instalado pero no hay configuración Docker.
+10. `tests/Unit/ExampleTest.php` y `tests/Feature/ExampleTest.php` son scaffold sin cobertura de dominio.
+11. El log histórico muestra errores de octubre y noviembre (`server` en vez de `serve`, `WSDL_CACHE_NONE` sin extensión). Son ruido anterior a las correcciones.
 
 ---
 
@@ -488,4 +496,4 @@ Dentro de `config/services.php`, las secciones `mailgun`, `postmark` y `ses` no 
 | Autorización en SOAP | Mapa por rol; operaciones desconocidas denegadas por defecto |
 | Cambio de rol | Revoca tokens y exige login nuevo |
 
-**Pendiente de autorización:** cambiar el `400` de "ya pagado" a `409` y ajustar la zona horaria a la del hotel.
+**Estado:** todos los requisitos acordados quedaron implementados. Los riesgos residuales estan en la seccion 11.2.

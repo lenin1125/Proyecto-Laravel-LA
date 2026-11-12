@@ -117,8 +117,10 @@ class ConsumoController extends Controller
             }
 
             if ($consumo->estado === 'Pagado') {
+                // Un consumo ya pagado es un conflicto de estado, no una
+                // peticion mal formada.
                 return [
-                    'codigo' => 400,
+                    'codigo' => 409,
                     'cuerpo' => ['mensaje' => 'Este consumo ya se encuentra pagado'],
                 ];
             }

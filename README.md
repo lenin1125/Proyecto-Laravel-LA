@@ -30,15 +30,17 @@ Ajustar en `.env`:
 | `SOAP_DB_DATABASE` | Base del servidor SOAP (`hotel_db`) |
 | `SOAP_TIMEOUT` | Timeout de las llamadas SOAP |
 
-La tabla `usuarios` de `hotel_db` debe existir antes del primer login, porque ahi se
-replica el usuario y el token que consume el servidor SOAP.
+La zona horaria es `America/Bogota` (UTC-5) y esta en `config/app.php`.
+
+`hotel_db.sql` crea la tabla `usuarios` con su columna `role`, asi que un entorno
+nuevo solo necesita importar ese script antes del primer login.
 
 ## Endpoints
 
 | Metodo | Ruta | Descripcion |
 |---|---|---|
 | POST | `/api/login` | Genera el token y lo sincroniza con SOAP |
-| GET | `/api/me` | Datos del usuario autenticado |
+| GET | `/api/me` | Datos del usuario autenticado y su rol |
 | POST | `/api/logout` | Revoca el token local y remoto |
 | POST | `/api/consumos` | Registra un consumo validando la reserva en SOAP |
 | GET | `/api/consumos/reserva/{id_reserva}` | Consumos de la reserva con datos de SOAP |
@@ -46,6 +48,25 @@ replica el usuario y el token que consume el servidor SOAP.
 | GET | `/api/checkout-status/{id_reserva}` | Saldo pendiente y paz y salvo |
 
 Todas salvo `login` exigen `Authorization: Bearer <token>`.
+
+## Roles
+
+Cada accion de negocio exige un rol distinto:
+
+| Accion | administrador | servicio_habitacion | cajero | recepcionista |
+|---|---|---|---|---|
+| Registrar consumo | si | si | no | no |
+| Consultar estado de cuenta | si | si | no | si |
+| Pagar consumo | si | no | si | no |
+| Verificar checkout | si | no | si | si |
+
+- Sin token: `401`.
+- Token valido sin permiso: `403` con `{"error":"Permisos insuficientes para ejecutar este método"}`.
+- Un usuario sin rol queda bloqueado en las cuatro acciones.
+- Pagar dos veces el mismo consumo devuelve `409 Conflict`.
+
+Los usuarios de demostracion se crean con `php artisan db:seed` y comparten la
+contrasena `123456`. El detalle esta en `postman/README.md`.
 
 ## Pruebas
 

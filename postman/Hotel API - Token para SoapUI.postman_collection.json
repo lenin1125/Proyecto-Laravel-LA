@@ -290,8 +290,8 @@
                             "script": {
                                 "type": "text/javascript",
                                 "exec": [
-                                    "pm.test('Pago autorizado (200 o 400 si ya estaba pagado)', function () {",
-                                    "    pm.expect([200, 400]).to.include(pm.response.code);",
+                                    "pm.test('Pago autorizado (200 o 409 si ya estaba pagado)', function () {",
+                                    "    pm.expect([200, 409]).to.include(pm.response.code);",
                                     "});"
                                 ]
                             }

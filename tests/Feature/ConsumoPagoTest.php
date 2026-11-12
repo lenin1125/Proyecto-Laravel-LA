@@ -61,7 +61,7 @@ class ConsumoPagoTest extends TestCase
 
         $this->postJson("/api/consumos/{$consumo->id}/pagar", [
             'metodo_pago' => 'Tarjeta',
-        ])->assertStatus(400);
+        ])->assertStatus(409);
 
         $this->assertSame(1, PagoConsumo::where('consumo_id', $consumo->id)->count());
     }
