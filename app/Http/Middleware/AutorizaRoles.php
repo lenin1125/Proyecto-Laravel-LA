@@ -26,9 +26,11 @@ trait AutorizaRoles
 
     public function handle(Request $request, Closure $next): Response
     {
-        $usuario = $request->user();
+        // El enunciado exige leer el rol manualmente desde el usuario
+        // autenticado. Nunca se toma del cuerpo ni de la cabecera.
+        $rol = $request->user()?->role;
 
-        if (! $usuario || ! $usuario->hasAnyRole($this->rolesPermitidos())) {
+        if ($rol === null || ! in_array($rol, $this->rolesPermitidos(), true)) {
             return response()->json(
                 ['error' => 'Permisos insuficientes para ejecutar este método'],
                 403,

@@ -28,7 +28,7 @@ API REST en **Laravel 10 / PHP 8.1** para registrar y cobrar consumos extras de 
 - `hotel_consumos_api`: 7 tablas.
 - `hotel_db`: 4 tablas (`habitacion`, `huesped`, `reserva`, `usuarios`).
 - Git inicializado en los dos proyectos; etiqueta base `linea-base` y commits por bloque.
-- 55 pruebas automatizadas en verde (220 aserciones).
+- 59 pruebas automatizadas en verde (239 aserciones).
 - Zona horaria `America/Bogota` (UTC-5), igual que el sistema y MySQL.
 - Login limitado a 5 intentos por minuto por correo e IP; token con vigencia de 8 horas, aplicada también en SOAP.
 
@@ -92,14 +92,14 @@ Archivo principal: `app/Http/Controllers/Api/AuthController.php`.
 
 ### 3.1 `POST /api/login`
 
-1. Valida `email` (máx. 50), `password` (obligatorio) y `dispositivo` (opcional, máx. 50).
-2. Busca el usuario en `users` y compara con `Hash::check`.
-3. El intento consume el límite `throttle:login`: **5 peticiones por minuto por correo e IP**. Al superarlo responde `429` con `{"mensaje": "Demasiadas solicitudes. Reintente en N segundos."}` y cabecera `Retry-After`. Se configura con `LOGIN_MAX_ATTEMPTS` y `LOGIN_DECAY_MINUTES`.
+1. Valida `usuario` o `email` (uno de los dos, máx. 50), `password` (obligatorio) y `dispositivo` (opcional, máx. 50).
+2. Busca el usuario en `users` por `username` o por `email` y compara con `Hash::check`.
+3. El intento consume el límite `throttle:login`: **5 peticiones por minuto por usuario/correo e IP**. Al superarlo responde `429` con `{"mensaje": "Demasiadas solicitudes. Reintente en N segundos."}` y cabecera `Retry-After`. Se configura con `LOGIN_MAX_ATTEMPTS` y `LOGIN_DECAY_MINUTES`.
 4. Abre una transacción local:
    - bloquea la fila del usuario (`lockForUpdate`);
    - **elimina todos los tokens anteriores** (`tokens()->delete()`);
    - crea un token Sanctum nuevo con nombre `dispositivo` o `"soapui"` y vencimiento de **480 minutos (8 horas)**, configurable con `SANCTUM_EXPIRATION`;
-   - llama a `HotelUsuarioSync::sincronizar(email, password_hash, token_plano, role)`.
+   - llama a `HotelUsuarioSync::sincronizar(soapUsername, password_hash, token_plano, role)`, donde `soapUsername` es `users.username` y, si está vacío, el correo.
 5. `HotelUsuarioSync` abre una conexión **PDO directa** a `hotel_db` reutilizando host, puerto, usuario y clave de la conexión MySQL de Laravel:
    - si el usuario existe en `hotel_db.usuarios`, actualiza `password`, `api_token`, `role` y `token_expira_en`;
    - si no existe, lo inserta;
@@ -110,10 +110,10 @@ Archivo principal: `app/Http/Controllers/Api/AuthController.php`.
 ```json
 {
   "mensaje": "Autenticacion exitosa.",
-  "usuario": { "id": 1, "nombre": "Administrador", "email": "administrador@hotel.test", "rol": "administrador" },
+  "usuario": { "id": 1, "nombre": "Administrador", "usuario": "administrador", "email": "administrador@hotel.test", "rol": "administrador" },
   "token": "...",
   "token_type": "Bearer",
-  "soap_username": "administrador@hotel.test",
+  "soap_username": "administrador",
   "soap_token": "...",
   "expira": "2026-11-13T22:34:46-05:00"
 }
@@ -125,7 +125,7 @@ Archivo principal: `app/Http/Controllers/Api/AuthController.php`.
 
 ### 3.2 `GET /api/me`
 
-Devuelve `id`, `nombre`, `email`, `rol`, `soap_username` y `expira` del token actual. `rol` puede ser `null` si la cuenta no tiene rol asignado. El token deja de autenticar al cumplirse la vigencia, tanto en REST como en SOAP.
+Devuelve `id`, `nombre`, `usuario`, `email`, `rol`, `soap_username` y `expira` del token actual. `rol` puede ser `null` si la cuenta no tiene rol asignado. El token deja de autenticar al cumplirse la vigencia, tanto en REST como en SOAP.
 
 ### 3.3 `POST /api/logout`
 
@@ -136,14 +136,14 @@ Devuelve `id`, `nombre`, `email`, `rol`, `soap_username` y `expira` del token ac
 
 ### 3.4 Roles y permisos (REST)
 
-Los roles se guardan en `users.role` (varchar 30, nullable). Las constantes viven en `App\Models\User`:
+Los roles se guardan en `users.role` (varchar 30, nullable). El identificador que pide el enunciado se guarda en `users.username` (varchar 50, único, nullable):
 
-| Constante | Valor |
-|---|---|
-| `ROLE_ADMIN` | `administrador` |
-| `ROLE_SERVICIO` | `servicio_habitacion` |
-| `ROLE_CAJERO` | `cajero` |
-| `ROLE_RECEPCION` | `recepcionista` |
+| Constante | Valor | Usuario demo |
+|---|---|---|
+| `ROLE_ADMIN` | `administrador` | `administrador` |
+| `ROLE_SERVICIO` | `servicio_habitacion` | `servicio_habitacion` |
+| `ROLE_CAJERO` | `cajero` | `cajero` |
+| `ROLE_RECEPCION` | `recepcionista` | `recepcionista` |
 
 Cada acción de negocio tiene su middleware, registrado en `app/Http/Kernel.php` y aplicado en `routes/api.php`:
 
@@ -156,7 +156,7 @@ Cada acción de negocio tiene su middleware, registrado en `app/Http/Kernel.php`
 
 Reglas:
 
-- El rol se lee del usuario autenticado en base de datos; **nunca** del cuerpo de la petición.
+- El rol se lee literalmente con `$request->user()->role` en `AutorizaRoles`; **nunca** del cuerpo de la petición.
 - `auth:sanctum` corre antes del middleware de rol, así que un token ausente o inválido devuelve `401` y no `403`.
 - Un rol `null` o desconocido recibe `403`.
 - Cuerpo exacto del `403`:
@@ -166,8 +166,8 @@ Reglas:
 ```
 
 - `CanRegisterConsumptions` y el resto repiten `administrador` de forma explícita (variante A1).
-- `IsAdministrator` existe y está registrado, aunque hoy ninguna ruta lo usa en exclusiva.
-- Cambiar el rol con `usuario:crear --role` elimina los tokens de Sanctum y anula el `api_token` en `hotel_db`, obligando a un login nuevo.
+- `IsAdministrator` existe y está registrado. Ninguna ruta de negocio lo usa en exclusiva porque el administrador ya está incluido en los cuatro middlewares; `RoleAccessTest::test_is_administrator_solo_deja_pasar_al_administrador` registra una ruta de prueba en memoria y demuestra que deja pasar al admin y devuelve `403` a los otros tres roles.
+- Cambiar el rol con `usuario:crear --role` o el username con `--username` elimina los tokens de Sanctum y anula el `api_token` en `hotel_db`, obligando a un login nuevo.
 
 ---
 
@@ -178,7 +178,7 @@ Archivo: `app/Services/SoapService.php`.
 - Construye la URL WSDL desde `SOAP_SERVICE_URL` + `?wsdl` (o usa `SOAP_WSDL_URL`).
 - Crea un `SoapClient` con timeout y `WSDL_CACHE_NONE`.
 - Agrega cabecera **WS-Security UsernameToken**:
-  - `Username` = email del usuario autenticado;
+  - `Username` = `users.username` (`administrador`, `servicio_habitacion`, `cajero`, `recepcionista`) o el correo si la cuenta no tiene username;
   - `Password` = token Sanctum **en texto plano** (PasswordText).
 - `obtenerReserva($id)` llama a `consultarReservas()` **sin parámetros**, parsea la respuesta (JSON, array u objeto), normaliza a lista y filtra en PHP por `id`.
 - Cualquier excepción se captura, se registra como warning y devuelve `null`.
@@ -197,13 +197,13 @@ Mapa vigente:
 
 | Rol | Operaciones permitidas |
 |---|---|
-| administrador | las 6 |
+| administrador | `consultarReservas` |
 | servicio_habitacion | `consultarReservas` |
-| recepcionista | `consultarHabitacion`, `listarHabitaciones`, `consultarReservas` |
+| recepcionista | `consultarReservas` |
 | cajero | ninguna |
 | rol `null` o desconocido | ninguna |
 
-Operaciones registradas: `registrarHabitacion`, `consultarHabitacion`, `listarHabitaciones`, `actualizarHabitacion`, `registrarReserva`, `consultarReservas`. Cualquier operación fuera de esa lista se niega por defecto.
+El enunciado autoriza solo `consultarReservas()` para los tres primeros perfiles. Es la única operación que la API REST consume, así que el resto queda cerrado aunque el servidor las tenga registradas. Operaciones registradas: `registrarHabitacion`, `consultarHabitacion`, `listarHabitaciones`, `actualizarHabitacion`, `registrarReserva`, `consultarReservas`. Cualquier operación fuera de la lista permitida se niega por defecto.
 
 `server.php` valida **antes** de llamar a `$server->service()`:
 
@@ -271,7 +271,7 @@ El `403` conserva `error` porque ese cuerpo exacto forma parte del requerimiento
 
 | Tabla | Uso | Campos relevantes |
 |---|---|---|
-| `users` | Usuarios de la API | `id`, `name`, `email` único, `password`, `role` (varchar 30, nullable), `email_verified_at` |
+| `users` | Usuarios de la API | `id`, `name`, `username` único nullable, `email` único, `password`, `role` (varchar 30, nullable), `email_verified_at` |
 | `personal_access_tokens` | Tokens Sanctum | `tokenable`, `name`, `token(64)`, `abilities`, `expires_at` |
 | `consumos` | Consumos extras | `id`, `id_reserva` (varchar, **sin FK**), `concepto`, `monto decimal(10,2)`, `estado enum(Pendiente, Pagado)`, `fecha_registro`, timestamps |
 | `pagos_consumos` | Pagos | `id`, `consumo_id` FK → `consumos` con `cascade`, `metodo_pago`, `fecha_pago`, timestamps |
@@ -345,16 +345,16 @@ php artisan test
 php artisan route:list
 ```
 
-`usuario:crear` crea o actualiza el usuario en `users` y valida email y contraseña (mínimo 6). `--role` acepta `administrador`, `servicio_habitacion`, `cajero` y `recepcionista`; si se omite, el rol no se modifica. Cuando el rol cambia, el comando revoca los tokens de Sanctum y el `api_token` de `hotel_db`. **No genera token**: eso se hace con `POST /api/login`.
+`usuario:crear` crea o actualiza el usuario en `users` y valida email y contraseña (mínimo 6). `--username` define el identificador de login y SOAP (letras, números o guion bajo, 3-50 caracteres); `--role` acepta `administrador`, `servicio_habitacion`, `cajero` y `recepcionista`. Si se omiten, no se modifican. Cuando el rol o el username cambian, el comando revoca los tokens de Sanctum y el `api_token` de `hotel_db`. **No genera token**: eso se hace con `POST /api/login`.
 
 Usuarios de demostración (`UsuarioRolSeeder`):
 
-| Rol | Correo | Contraseña |
-|---|---|---|
-| administrador | `administrador@hotel.test` | `123456` |
-| servicio_habitacion | `servicio@hotel.test` | `123456` |
-| cajero | `cajero@hotel.test` | `123456` |
-| recepcionista | `recepcionista@hotel.test` | `123456` |
+| Rol | Usuario | Correo | Contraseña |
+|---|---|---|---|
+| administrador | `administrador` | `administrador@hotel.test` | `123456` |
+| servicio_habitacion | `servicio_habitacion` | `servicio@hotel.test` | `123456` |
+| cajero | `cajero` | `cajero@hotel.test` | `123456` |
+| recepcionista | `recepcionista` | `recepcionista@hotel.test` | `123456` |
 
 `lenin@hotel.test` y `prueba@hotel.test` quedan sin rol: inician sesión, pero reciben `403` en las cuatro acciones de negocio.
 
@@ -364,12 +364,12 @@ Usuarios de demostración (`UsuarioRolSeeder`):
 
 | Archivo | Pruebas | Cobertura |
 |---|---|---|
-| `tests/Feature/AuthApiTest.php` | 10 | Login, validación, token, rol en la respuesta, `/me`, revocación, logout, fallos 503 y conservación de tokens |
+| `tests/Feature/AuthApiTest.php` | 11 | Login por usuario y por correo, validación, token, rol en la respuesta, `/me`, revocación, logout, fallos 503 y conservación de tokens |
 | `tests/Feature/ConsumoApiTest.php` | 4 | 401 sin token, checkout, `porReserva` con SOAP simulado y alta de consumo |
 | `tests/Feature/ConsumoPagoTest.php` | 5 | Pago exitoso, doble pago, método inválido y consumo inexistente |
-| `tests/Feature/RoleAccessTest.php` | 11 | Matriz 4x4 de permisos, `401` sin token, rol `null`, cuerpo exacto del `403`, rol falsificado en el body y rol sin permiso no llega a SOAP |
+| `tests/Feature/RoleAccessTest.php` | 12 | Matriz 4x4 de permisos, `401` sin token, rol `null`, cuerpo exacto del `403`, rol falsificado en el body, rol sin permiso no llega a SOAP y `IsAdministrator` aplicado |
 | `tests/Feature/SoapFallbackTest.php` | 4 | SOAP caído devuelve `503` y no `404` |
-| `tests/Feature/SoapServiceTest.php` | 1 | Exige token para crear cliente SOAP |
+| `tests/Feature/SoapServiceTest.php` | 3 | Exige token para crear cliente SOAP y envia el username (o el correo como respaldo) en WS-Security |
 | `tests/Feature/FormatoErroresTest.php` | 6 | `mensaje` en 401, 404, 405, 422 y 404 de negocio; el 403 conserva `error` |
 | `tests/Feature/LoginThrottleTest.php` | 3 | Bloqueo tras varios intentos fallidos, contador por correo y login válido dentro del límite |
 | `tests/Feature/TokenExpiracionTest.php` | 2 | El login anuncia `expira`, el token vence a las 8 horas y la fecha queda en `expires_at` |
@@ -379,7 +379,7 @@ Usuarios de demostración (`UsuarioRolSeeder`):
 | `tests/Unit/ExampleTest.php` | 1 | `assertTrue(true)` — scaffold |
 | `tests/Feature/ExampleTest.php` | 1 | `GET /` responde 200 — scaffold |
 
-**Total: 55 pruebas, 220 aserciones, en verde.**
+**Total: 59 pruebas, 239 aserciones, en verde.**
 
 **No cubierto:** concurrencia real de pagos, límite distribuido entre varios servidores y pruebas de carga.
 
@@ -462,6 +462,9 @@ Dentro de `config/services.php`, las secciones `mailgun`, `postmark` y `ses` no 
 16. **Throttle específico de login:** 5 intentos por minuto por correo e IP. Al superarlo responde `429` con `mensaje` y `Retry-After`. Se configura con `LOGIN_MAX_ATTEMPTS` y `LOGIN_DECAY_MINUTES`.
 17. **Tokens con vencimiento:** 480 minutos (8 horas) mediante `SANCTUM_EXPIRATION`. El login devuelve `expira` y cada token guarda `expires_at`. El servidor SOAP aplica la misma vigencia con `token_expira_en` en `hotel_db.usuarios`; un token vencido recibe `401` tanto en REST como en SOAP.
 18. **Formato de error homogenizado:** todas las respuestas usan `mensaje` (`401`, `404`, `405`, `409`, `422`, `429`, `503`). El `403` conserva `error` por contrato y el `422` conserva `errors` para el detalle por campo.
+19. **Login por nombre de usuario:** se agregó `users.username` (único, nullable) y el login acepta `usuario` o `email`. Los cuatro demos usan `administrador`, `servicio_habitacion`, `cajero` y `recepcionista`, tal como los nombra el enunciado.
+20. **SOAP restringido al enunciado:** administrador, servicio de habitación y recepcionista solo pueden ejecutar `consultarReservas`; el cajero ninguna. La identidad enviada en WS-Security es `users.username` y, si falta, el correo.
+21. **Lectura literal del rol:** `AutorizaRoles` compara `$request->user()->role` directamente. Se agregó una prueba que aplica `IsAdministrator` a una ruta en memoria y demuestra que solo deja pasar al administrador.
 
 ### 11.2 Pendientes
 
@@ -523,19 +526,20 @@ Dentro de `config/services.php`, las secciones `mailgun`, `postmark` y `ses` no 
 
 | Requisito de la profesora | Estado |
 |---|---|
-| Cuatro perfiles (`administrador`, `servicio_habitacion`, `cajero`, `recepcionista`) | Implementado en `users.role` y en `hotel_db.usuarios.role` |
-| Middleware `IsAdministrator` | Implementado y registrado (sin ruta exclusiva, variante A1) |
+| Cuatro perfiles (`administrador`, `servicio_habitacion`, `cajero`, `recepcionista`) | Implementado en `users.role`, `users.username` y en `hotel_db.usuarios.role` |
+| Login por `usuario` o `email` | Implementado; los demos usan los nombres exactos del enunciado |
+| Middleware `IsAdministrator` | Implementado, registrado y probado con una ruta en memoria (sin ruta exclusiva, variante A1) |
 | Middleware `CanRegisterConsumptions` | Implementado y aplicado a `POST /api/consumos` |
 | Middleware `CanProcessPayments` | Implementado y aplicado a `POST /api/consumos/{id}/pagar` |
 | Middleware `CanCheckOut` | Implementado y aplicado a `GET /api/checkout-status/{id}` |
 | Middleware `CanConsultAccount` | Implementado y aplicado a `GET /api/consumos/reserva/{id}` |
-| Control por accion y no por dato | El middleware decide antes del controlador; el rol no se lee del body |
+| Control por accion y no por dato | El middleware lee `$request->user()->role` antes del controlador; el rol no se lee del body |
 | `401` sin token / `403` sin permiso | Verificado en REST y en SOAP |
 | Cuerpo exacto del `403` | `{"error":"Permisos insuficientes para ejecutar este método"}` |
 | Rol `null` bloqueado | `lenin@hotel.test` y `prueba@hotel.test` reciben `403` |
-| Autorización en SOAP | Mapa por rol; operaciones desconocidas denegadas por defecto |
-| Cambio de rol | Revoca tokens y exige login nuevo |
-| Throttle de login | 5 intentos por minuto por correo e IP; `429` con `mensaje` y `Retry-After` |
+| Autorización en SOAP | Administrador, servicio y recepción solo `consultarReservas`; cajero ninguna |
+| Cambio de rol o de usuario | Revoca tokens y exige login nuevo |
+| Throttle de login | 5 intentos por minuto por usuario/correo e IP; `429` con `mensaje` y `Retry-After` |
 | Vencimiento del token | 480 minutos (8 h) en REST y en SOAP mediante `token_expira_en` |
 | Formato de error | `mensaje` en todos los codigos, salvo el `403`, que conserva `error` por contrato |
 

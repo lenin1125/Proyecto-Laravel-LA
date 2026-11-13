@@ -58,13 +58,28 @@ class SoapService
             'stream_context' => stream_context_create(['http' => ['timeout' => $this->timeout]]),
         ]);
         $ns = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd';
-        $xml = '<wsse:Security xmlns:wsse="'.$ns.'"><wsse:UsernameToken><wsse:Username>'
-            .htmlspecialchars($usuario->email, ENT_QUOTES | ENT_XML1, 'UTF-8')
-            .'</wsse:Username><wsse:Password>'.htmlspecialchars($token, ENT_QUOTES | ENT_XML1, 'UTF-8')
-            .'</wsse:Password></wsse:UsernameToken></wsse:Security>';
-        $client->__setSoapHeaders(new \SoapHeader($ns, 'Security', new \SoapVar($xml, XSD_ANYXML)));
+        $client->__setSoapHeaders(new \SoapHeader($ns, 'Security', new \SoapVar(
+            $this->xmlSeguridad($usuario->soapUsername(), $token),
+            XSD_ANYXML
+        )));
 
         return $client;
+    }
+
+    /**
+     * Construye la cabecera WS-Security con la identidad que entiende SOAP.
+     *
+     * Se separa del cliente para poder probar que se envia el username y no
+     * el correo.
+     */
+    protected function xmlSeguridad(string $identidad, string $token): string
+    {
+        $ns = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd';
+
+        return '<wsse:Security xmlns:wsse="'.$ns.'"><wsse:UsernameToken><wsse:Username>'
+            .htmlspecialchars($identidad, ENT_QUOTES | ENT_XML1, 'UTF-8')
+            .'</wsse:Username><wsse:Password>'.htmlspecialchars($token, ENT_QUOTES | ENT_XML1, 'UTF-8')
+            .'</wsse:Password></wsse:UsernameToken></wsse:Security>';
     }
 
     public function obtenerReserva($idReserva, ?User $usuario = null, ?string $token = null)

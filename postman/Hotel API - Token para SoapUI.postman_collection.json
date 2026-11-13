@@ -50,7 +50,7 @@
                         },
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n  \"email\": \"{{soap_username}}\",\n  \"password\": \"{{soap_password}}\",\n  \"dispositivo\": \"postman\"\n}",
+                            "raw": "{\n  \"usuario\": \"{{soap_username}}\",\n  \"password\": \"{{soap_password}}\",\n  \"dispositivo\": \"postman\"\n}",
                             "options": {
                                 "raw": {
                                     "language": "json"

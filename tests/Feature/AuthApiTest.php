@@ -41,6 +41,8 @@ class AuthApiTest extends TestCase
         return User::factory()->create([
             // Correo que se usara en Postman y SoapUI.
             'email' => 'lenin@hotel.test',
+            // Nombre de usuario que exige el enunciado.
+            'username' => 'lenin',
             // Nombre visible del usuario.
             'name' => 'Lenin',
             // Contrasena cifrada que coincide con 123456.
@@ -61,7 +63,7 @@ class AuthApiTest extends TestCase
             // Exige una sola llamada con el correo y el token recien emitido.
             $mock->shouldReceive('sincronizar')
                 ->once()
-                ->with($usuario->email, Mockery::type('string'), Mockery::type('string'), $usuario->role);
+                ->with($usuario->soapUsername(), Mockery::type('string'), Mockery::type('string'), $usuario->role);
         });
 
         // Envia el login con las credenciales correctas.
@@ -85,8 +87,8 @@ class AuthApiTest extends TestCase
                 'soap_token',
             ]);
 
-        // Comprueba que el usuario de SoapUI sea el correo autenticado.
-        $respuesta->assertJsonPath('soap_username', 'lenin@hotel.test');
+        // Comprueba que el usuario de SoapUI sea el nombre de usuario.
+        $respuesta->assertJsonPath('soap_username', 'lenin');
 
         // Comprueba que el token de SoapUI sea el mismo token de la API.
         $this->assertSame(
@@ -96,6 +98,27 @@ class AuthApiTest extends TestCase
 
         // Comprueba que solo exista un token activo en la base de datos.
         $this->assertDatabaseCount('personal_access_tokens', 1);
+    }
+
+    /**
+     * Comprueba que el login acepte el nombre de usuario del enunciado.
+     */
+    public function test_login_acepta_el_nombre_de_usuario(): void
+    {
+        $usuario = $this->crearUsuario();
+
+        $this->mock(HotelUsuarioSync::class, function ($mock) use ($usuario) {
+            $mock->shouldReceive('sincronizar')
+                ->once()
+                ->with($usuario->soapUsername(), Mockery::type('string'), Mockery::type('string'), $usuario->role);
+        });
+
+        $this->postJson('/api/login', [
+            'usuario' => 'lenin',
+            'password' => '123456',
+        ])->assertOk()
+            ->assertJsonPath('usuario.usuario', 'lenin')
+            ->assertJsonPath('soap_username', 'lenin');
     }
 
     /**
@@ -137,7 +160,7 @@ class AuthApiTest extends TestCase
 
         // Comprueba el codigo de validacion de Laravel.
         $respuesta->assertUnprocessable()
-            ->assertJsonValidationErrors(['email', 'password']);
+            ->assertJsonValidationErrors(['usuario', 'email', 'password']);
     }
 
     /**
@@ -169,7 +192,8 @@ class AuthApiTest extends TestCase
         // Comprueba la respuesta y los datos publicos.
         $respuesta->assertOk()
             ->assertJsonPath('email', 'lenin@hotel.test')
-            ->assertJsonPath('soap_username', 'lenin@hotel.test');
+            ->assertJsonPath('usuario', 'lenin')
+            ->assertJsonPath('soap_username', 'lenin');
     }
 
     /**

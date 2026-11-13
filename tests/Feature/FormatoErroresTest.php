@@ -27,7 +27,7 @@ class FormatoErroresTest extends TestCase
         $this->postJson('/api/login', [])
             ->assertUnprocessable()
             ->assertJsonPath('mensaje', 'Los datos enviados no son validos.')
-            ->assertJsonValidationErrors(['email', 'password']);
+            ->assertJsonValidationErrors(['usuario', 'email', 'password']);
     }
 
     public function test_ruta_inexistente_devuelve_404_con_mensaje(): void

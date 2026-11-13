@@ -1,21 +1,13 @@
 <?php
 
 // Declara el espacio de nombres de los comandos de consola.
+
 namespace App\Console\Commands;
 
-// Importa el modelo User para crear o actualizar el usuario.
 use App\Models\User;
-
-// Importa el comando base de Laravel.
-use Illuminate\Console\Command;
-
-// Importa el servicio que sincroniza el usuario con el servidor SOAP.
 use App\Services\HotelUsuarioSync;
-
-// Importa el facade Hash para cifrar la contrasena.
+use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Hash;
-
-// Importa Throwable para no detener el comando si SOAP no responde.
 use Throwable;
 
 /**
@@ -35,6 +27,7 @@ class CrearUsuarioSoap extends Command
     protected $signature = 'usuario:crear
                             {email : Correo electronico del usuario}
                             {password : Contrasena en texto plano}
+                            {--username= : Nombre de usuario para el login y SOAP (ej. administrador)}
                             {--name= : Nombre visible del usuario}
                             {--role= : Rol del usuario (administrador, servicio_habitacion, cajero, recepcionista)}';
 
@@ -89,8 +82,22 @@ class CrearUsuarioSoap extends Command
             return self::FAILURE;
         }
 
+        // Lee el nombre de usuario opcional recibido con --username.
+        $username = trim((string) $this->option('username'));
+
+        // Solo admite letras, numeros y guion bajo: es el identificador del
+        // login y el nombre que viaja en WS-Security hacia SOAP.
+        if ($username !== '' && preg_match('/^[A-Za-z0-9_]{3,50}$/', $username) !== 1) {
+            $this->error('El nombre de usuario debe tener entre 3 y 50 caracteres: letras, numeros o guion bajo.');
+
+            return self::FAILURE;
+        }
+
         // Busca el usuario por correo o prepara uno nuevo si no existe.
         $usuario = User::firstOrNew(['email' => $email]);
+
+        // Guarda el correo anterior para revocar el token remoto si cambia.
+        $identidadAnterior = $usuario->exists ? $usuario->soapUsername() : null;
 
         // Guarda el rol anterior para detectar cambios al final.
         $rolAnterior = $usuario->role;
@@ -107,8 +114,13 @@ class CrearUsuarioSoap extends Command
             $usuario->name = $nombre;
         }
 
+        // Actualiza el identificador solo cuando se envio --username.
+        if ($username !== '') {
+            $usuario->username = $username;
+        }
+
         // Asigna un nombre derivado del correo cuando el usuario es nuevo.
-        if (!$usuario->exists && $usuario->name === null) {
+        if (! $usuario->exists && $usuario->name === null) {
             // Toma la parte anterior al arroba como nombre visible.
             $usuario->name = explode('@', $email)[0];
         }
@@ -127,31 +139,42 @@ class CrearUsuarioSoap extends Command
         // Guarda el usuario en la base de datos de Laravel.
         $usuario->save();
 
-        // Si el rol cambio, invalida los pases para forzar un login nuevo.
-        if ($rolAnterior !== $usuario->role) {
+        // Si el rol o el nombre de usuario cambiaron, invalida los pases para
+        // forzar un login nuevo y limpia la identidad anterior en SOAP.
+        $identidadNueva = $usuario->soapUsername();
+        $identidadCambio = $identidadAnterior !== null && $identidadAnterior !== $identidadNueva;
+
+        if ($rolAnterior !== $usuario->role || $identidadCambio) {
             $usuario->tokens()->delete();
 
             try {
-                app(HotelUsuarioSync::class)->revocarTodos($usuario->email);
+                if ($identidadAnterior !== null) {
+                    app(HotelUsuarioSync::class)->revocarTodos($identidadAnterior);
+                }
+
+                if ($identidadCambio) {
+                    app(HotelUsuarioSync::class)->revocarTodos($identidadNueva);
+                }
             } catch (Throwable $e) {
                 $this->warn('No se pudo revocar el token en SOAP: '.$e->getMessage());
             }
 
-            $this->line('El rol cambio: se cerraron las sesiones y se exigira un login nuevo.');
+            $this->line('El rol o el usuario cambio: se cerraron las sesiones y se exigira un login nuevo.');
         }
 
         // Muestra el resultado segun si el usuario ya existia o es nuevo.
         $this->info($yaExistia ? 'Usuario actualizado correctamente.' : 'Usuario creado correctamente.');
 
-        // Muestra el correo y la contrasena que se usaran en Postman.
-        $this->line('Correo: ' . $usuario->email);
-        $this->line('Contrasena: ' . $password);
+        // Muestra el identificador, el correo y la contrasena de acceso.
+        $this->line('Usuario: '.$usuario->soapUsername());
+        $this->line('Correo: '.$usuario->email);
+        $this->line('Contrasena: '.$password);
 
         // Muestra el rol asignado o advierte que el usuario queda bloqueado.
-        $this->line('Rol: ' . ($usuario->role ?? 'sin rol (bloqueado por los middlewares)'));
+        $this->line('Rol: '.($usuario->role ?? 'sin rol (bloqueado por los middlewares)'));
 
         // Explica el siguiente paso para obtener el token.
-        $this->line('Siguiente paso: POST /api/login con ese correo y contrasena.');
+        $this->line('Siguiente paso: POST /api/login con ese usuario (o correo) y contrasena.');
 
         // Devuelve el codigo de exito del comando.
         return self::SUCCESS;

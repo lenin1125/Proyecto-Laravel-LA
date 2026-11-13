@@ -45,16 +45,16 @@ class RouteServiceProvider extends ServiceProvider
             return Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
         });
 
-        // Limite especifico para el login: se cuenta por correo e IP, no por
-        // usuario autenticado, porque en este punto todavia no hay sesion.
+        // Limite especifico para el login: se cuenta por usuario/correo e IP,
+        // no por usuario autenticado, porque en este punto todavia no hay sesion.
         RateLimiter::for('login', function (Request $request) {
-            $email = $request->input('email');
-            $email = is_string($email) ? mb_strtolower(trim($email)) : '';
+            $identificador = $request->input('usuario') ?? $request->input('email');
+            $identificador = is_string($identificador) ? mb_strtolower(trim($identificador)) : '';
 
             return Limit::perMinutes(
                 max(1, (int) config('auth.login_throttle.decay_minutes', 1)),
                 max(1, (int) config('auth.login_throttle.max_attempts', 5))
-            )->by($email.'|'.$request->ip());
+            )->by($identificador.'|'.$request->ip());
         });
     }
 }

@@ -2,10 +2,12 @@
 
 namespace Tests\Feature;
 
+use App\Http\Middleware\IsAdministrator;
 use App\Models\Consumo;
 use App\Models\User;
 use App\Services\SoapService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Route;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -206,5 +208,30 @@ class RoleAccessTest extends TestCase
         $this->actuarComo(User::ROLE_CAJERO);
 
         $this->getJson('/api/me')->assertOk();
+    }
+
+    /**
+     * Demuestra que IsAdministrator funciona y que solo deja pasar al admin.
+     *
+     * Se registra una ruta de prueba en memoria para no agregar una ruta de
+     * negocio que el enunciado no pide. El middleware real es el mismo que
+     * esta registrado en Kernel.php.
+     */
+    public function test_is_administrator_solo_deja_pasar_al_administrador(): void
+    {
+        Route::middleware(['auth:sanctum', IsAdministrator::class])
+            ->get('/api/prueba-solo-admin', fn () => response()->json(['ok' => true]));
+
+        foreach (User::ROLES as $rol) {
+            $this->actuarComo($rol);
+
+            $respuesta = $this->getJson('/api/prueba-solo-admin');
+
+            if ($rol === User::ROLE_ADMIN) {
+                $respuesta->assertOk()->assertExactJson(['ok' => true]);
+            } else {
+                $respuesta->assertStatus(403)->assertExactJson(self::DENEGADO);
+            }
+        }
     }
 }

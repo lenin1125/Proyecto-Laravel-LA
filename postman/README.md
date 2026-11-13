@@ -8,12 +8,15 @@ Este directorio contiene tres archivos listos para importar:
 
 ## 1. Usuarios de demostracion
 
-| Rol | Correo | Contrasena |
-|---|---|---|
-| administrador | `administrador@hotel.test` | `123456` |
-| servicio_habitacion | `servicio@hotel.test` | `123456` |
-| cajero | `cajero@hotel.test` | `123456` |
-| recepcionista | `recepcionista@hotel.test` | `123456` |
+| Rol | Usuario | Correo | Contrasena |
+|---|---|---|---|
+| administrador | `administrador` | `administrador@hotel.test` | `123456` |
+| servicio_habitacion | `servicio_habitacion` | `servicio@hotel.test` | `123456` |
+| cajero | `cajero` | `cajero@hotel.test` | `123456` |
+| recepcionista | `recepcionista` | `recepcionista@hotel.test` | `123456` |
+
+El login acepta `usuario` o `email`. El enunciado usa los nombres de la columna
+`Usuario`, que es lo recomendado para la presentacion.
 
 Se crean con:
 
@@ -24,7 +27,7 @@ php artisan db:seed
 O uno por uno:
 
 ```bash
-php artisan usuario:crear cajero@hotel.test 123456 --name=Cajero --role=cajero
+php artisan usuario:crear cajero@hotel.test 123456 --username=cajero --name=Cajero --role=cajero
 ```
 
 `123456` es una credencial de prueba. En un entorno real cada rol debe tener su
@@ -71,8 +74,9 @@ La coleccion `Hotel API - Token para SoapUI` sigue funcionando. Usa
 `soap_username` y `soap_password` del entorno, que por defecto apuntan al
 administrador, y guarda el token en `soap_token`.
 
-Para probar otro rol en esa coleccion, cambia `soap_username` por el correo del
-rol y vuelve a ejecutar el login.
+Para probar otro rol en esa coleccion, cambia `soap_username` por el nombre de
+usuario del rol (`servicio_habitacion`, `cajero` o `recepcionista`), ajusta
+`soap_password` si cambiaste la clave y vuelve a ejecutar el login.
 
 ## 5. SoapUI
 
@@ -81,7 +85,7 @@ rol y vuelve a ejecutar el login.
 2. Abre `consultarReservas`.
 3. En `WS-Security Configurations` agrega una configuracion:
    - Tipo: `Username`
-   - Username: el correo del usuario
+   - Username: el nombre de usuario (`administrador`, `servicio_habitacion`, `cajero` o `recepcionista`)
    - Password: el token generado por el login
    - Password type: `PasswordText`
 4. Asocia la configuracion a la peticion y ejecutala.

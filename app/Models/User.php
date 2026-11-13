@@ -34,6 +34,7 @@ class User extends Authenticatable
      */
     protected $fillable = [
         'name',
+        'username',
         'email',
         'password',
         'role',
@@ -47,6 +48,20 @@ class User extends Authenticatable
     public function hasAnyRole(array $roles): bool
     {
         return $this->role !== null && in_array($this->role, $roles, true);
+    }
+
+    /**
+     * Identidad que se usa en el servidor SOAP.
+     *
+     * El enunciado nombra las cuentas como administrador, cajero, etc. Si la
+     * cuenta tiene username se usa ese valor; si no, se conserva el correo
+     * para no romper los usuarios anteriores.
+     */
+    public function soapUsername(): string
+    {
+        return $this->username !== null && $this->username !== ''
+            ? $this->username
+            : $this->email;
     }
 
     /**

@@ -18,11 +18,20 @@ class AuthController extends Controller
     public function login(Request $request, HotelUsuarioSync $sync): JsonResponse
     {
         $datos = $request->validate([
-            'email' => ['required', 'email', 'max:50'],
+            'usuario' => ['required_without:email', 'string', 'max:50'],
+            'email' => ['required_without:usuario', 'email', 'max:50'],
             'password' => ['required', 'string'],
             'dispositivo' => ['sometimes', 'string', 'max:50'],
         ]);
-        $usuario = User::where('email', $datos['email'])->first();
+
+        // El enunciado identifica las cuentas por nombre (administrador,
+        // cajero, ...). Se acepta tambien el correo para no romper las
+        // cuentas anteriores.
+        $identificador = $datos['usuario'] ?? $datos['email'];
+        $usuario = User::where('username', $identificador)
+            ->orWhere('email', $identificador)
+            ->first();
+
         if (! $usuario || ! Hash::check($datos['password'], $usuario->password)) {
             return response()->json(['mensaje' => 'Credenciales invalidas.'], 401);
         }
@@ -38,7 +47,7 @@ class AuthController extends Controller
                     ['*'],
                     $expira
                 )->plainTextToken;
-                $sync->sincronizar($usuario->email, $usuario->password, $token, $usuario->role);
+                $sync->sincronizar($usuario->soapUsername(), $usuario->password, $token, $usuario->role);
 
                 return $token;
             });
@@ -50,10 +59,16 @@ class AuthController extends Controller
 
         return response()->json([
             'mensaje' => 'Autenticacion exitosa.',
-            'usuario' => ['id' => $usuario->id, 'nombre' => $usuario->name, 'email' => $usuario->email, 'rol' => $usuario->role],
+            'usuario' => [
+                'id' => $usuario->id,
+                'nombre' => $usuario->name,
+                'usuario' => $usuario->username,
+                'email' => $usuario->email,
+                'rol' => $usuario->role,
+            ],
             'token' => $token,
             'token_type' => 'Bearer',
-            'soap_username' => $usuario->email,
+            'soap_username' => $usuario->soapUsername(),
             'soap_token' => $token,
             'expira' => $expira->toIso8601String(),
         ])->header('Cache-Control', 'no-store');
@@ -73,9 +88,10 @@ class AuthController extends Controller
         return response()->json([
             'id' => $usuario->id,
             'nombre' => $usuario->name,
+            'usuario' => $usuario->username,
             'email' => $usuario->email,
             'rol' => $usuario->role,
-            'soap_username' => $usuario->email,
+            'soap_username' => $usuario->soapUsername(),
             'expira' => $expira,
         ]);
     }
@@ -93,7 +109,7 @@ class AuthController extends Controller
         try {
             DB::transaction(function () use ($request, $sync): void {
                 $usuario = User::whereKey($request->user()->id)->lockForUpdate()->firstOrFail();
-                $sync->revocar($usuario->email, (string) $request->bearerToken());
+                $sync->revocar($usuario->soapUsername(), (string) $request->bearerToken());
                 $usuario->tokens()->whereKey($request->user()->currentAccessToken()->getKey())->delete();
             });
         } catch (Throwable) {

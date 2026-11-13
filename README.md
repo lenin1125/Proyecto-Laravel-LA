@@ -17,7 +17,7 @@ reservas, habitaciones y huespedes.
 composer install
 cp .env.example .env
 php artisan key:generate
-php artisan migrate
+php artisan migrate --seed
 php artisan serve
 ```
 
@@ -30,7 +30,7 @@ Ajustar en `.env`:
 | `SOAP_DB_DATABASE` | Base del servidor SOAP (`hotel_db`) |
 | `SOAP_TIMEOUT` | Timeout de las llamadas SOAP |
 | `SANCTUM_EXPIRATION` | Minutos de vigencia del token (480 por defecto) |
-| `LOGIN_MAX_ATTEMPTS` | Intentos de login por correo e IP (5 por defecto) |
+| `LOGIN_MAX_ATTEMPTS` | Intentos de login por usuario/correo e IP (5 por defecto) |
 | `LOGIN_DECAY_MINUTES` | Minutos de la ventana del throttle (1 por defecto) |
 
 La zona horaria es `America/Bogota` (UTC-5) y esta en `config/app.php`.
@@ -42,7 +42,7 @@ asi que un entorno nuevo solo necesita importar ese script antes del primer logi
 
 | Metodo | Ruta | Descripcion |
 |---|---|---|
-| POST | `/api/login` | Genera el token y lo sincroniza con SOAP |
+| POST | `/api/login` | Genera el token y lo sincroniza con SOAP. Acepta `usuario` o `email` |
 | GET | `/api/me` | Datos del usuario autenticado y su rol |
 | POST | `/api/logout` | Revoca el token local y remoto |
 | POST | `/api/consumos` | Registra un consumo validando la reserva en SOAP |
@@ -65,11 +65,24 @@ Cada accion de negocio exige un rol distinto:
 
 - Sin token: `401` con `{"mensaje":"No autenticado. Se requiere un token Bearer valido."}`.
 - Token valido sin permiso: `403` con `{"error":"Permisos insuficientes para ejecutar este método"}`.
+- El middleware lee el rol con `$request->user()->role`, nunca del cuerpo.
 - Un usuario sin rol queda bloqueado en las cuatro acciones.
 - Pagar dos veces el mismo consumo devuelve `409 Conflict`.
 
 Los usuarios de demostracion se crean con `php artisan db:seed` y comparten la
-contrasena `123456`. El detalle esta en `postman/README.md`.
+contrasena `123456`:
+
+| Rol | Usuario | Correo |
+|---|---|---|
+| administrador | `administrador` | `administrador@hotel.test` |
+| servicio_habitacion | `servicio_habitacion` | `servicio@hotel.test` |
+| cajero | `cajero` | `cajero@hotel.test` |
+| recepcionista | `recepcionista` | `recepcionista@hotel.test` |
+
+En SOAP los tres primeros roles pueden ejecutar solo `consultarReservas`; el
+cajero ninguna. `IsAdministrator` existe y esta probado con una ruta en memoria;
+el administrador se repite en los cuatro middlewares (variante A1).
+El detalle esta en `postman/README.md` y la guia paso a paso en `GUIA-DE-PRUEBAS.md`.
 
 ## Seguridad
 
@@ -95,5 +108,6 @@ Usan la base `hotel_consumos_api_test` definida en `phpunit.xml`.
 ## Documentacion
 
 - `DOCUMENTACION.md`: revision tecnica completa del proyecto.
+- `GUIA-DE-PRUEBAS.md`: guia paso a paso para demostrar el enunciado.
 - `ENTENDIMIENTO-REQUERIMIENTOS.md`: explicacion de roles y middlewares en lenguaje sencillo.
 - `postman/README.md`: uso de la coleccion y del entorno.

@@ -8,7 +8,7 @@
                                                       "url":  "{{base_url}}/api/login",
                                                       "method":  "POST",
                                                       "body":  {
-                                                                   "raw":  "{\n  \"email\": \"administrador@hotel.test\",\n  \"password\": \"123456\",\n  \"dispositivo\": \"postman-admin\"\n}",
+                                                                   "raw":  "{\n  \"usuario\": \"administrador\",\n  \"password\": \"123456\",\n  \"dispositivo\": \"postman-admin\"\n}",
                                                                    "mode":  "raw"
                                                                },
                                                       "header":  [
@@ -38,7 +38,7 @@
                                                       "url":  "{{base_url}}/api/login",
                                                       "method":  "POST",
                                                       "body":  {
-                                                                   "raw":  "{\n  \"email\": \"servicio@hotel.test\",\n  \"password\": \"123456\",\n  \"dispositivo\": \"postman-servicio\"\n}",
+                                                                   "raw":  "{\n  \"usuario\": \"servicio_habitacion\",\n  \"password\": \"123456\",\n  \"dispositivo\": \"postman-servicio\"\n}",
                                                                    "mode":  "raw"
                                                                },
                                                       "header":  [
@@ -68,7 +68,7 @@
                                                       "url":  "{{base_url}}/api/login",
                                                       "method":  "POST",
                                                       "body":  {
-                                                                   "raw":  "{\n  \"email\": \"cajero@hotel.test\",\n  \"password\": \"123456\",\n  \"dispositivo\": \"postman-cajero\"\n}",
+                                                                   "raw":  "{\n  \"usuario\": \"cajero\",\n  \"password\": \"123456\",\n  \"dispositivo\": \"postman-cajero\"\n}",
                                                                    "mode":  "raw"
                                                                },
                                                       "header":  [
@@ -98,7 +98,7 @@
                                                       "url":  "{{base_url}}/api/login",
                                                       "method":  "POST",
                                                       "body":  {
-                                                                   "raw":  "{\n  \"email\": \"recepcionista@hotel.test\",\n  \"password\": \"123456\",\n  \"dispositivo\": \"postman-recepcion\"\n}",
+                                                                   "raw":  "{\n  \"usuario\": \"recepcionista\",\n  \"password\": \"123456\",\n  \"dispositivo\": \"postman-recepcion\"\n}",
                                                                    "mode":  "raw"
                                                                },
                                                       "header":  [

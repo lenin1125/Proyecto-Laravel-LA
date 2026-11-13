@@ -87,12 +87,13 @@ class SoapTokenTest extends TestCase
         // Prepara el sobre SOAP que auth.php lee desde el global.
         $autenticado = fn (string $email): string => $this->xml($email, $token);
 
-        // El administrador puede las seis operaciones.
+        // El administrador solo consulta reservas segun el enunciado.
         $GLOBALS['soap_cuerpo_solicitud'] = $autenticado('admin@test.com');
-        foreach (operacionesSOAPConocidas() as $operacion) {
-            $this->assertTrue(
+        $this->assertTrue(autorizarOperacionSOAP('consultarReservas', $this->soapDb));
+        foreach (['registrarHabitacion', 'consultarHabitacion', 'listarHabitaciones', 'actualizarHabitacion', 'registrarReserva'] as $operacion) {
+            $this->assertFalse(
                 autorizarOperacionSOAP($operacion, $this->soapDb),
-                "El administrador deberia poder ejecutar {$operacion}."
+                "El administrador no deberia poder ejecutar {$operacion}."
             );
         }
 
@@ -103,12 +104,10 @@ class SoapTokenTest extends TestCase
             $this->assertFalse(autorizarOperacionSOAP($operacion, $this->soapDb));
         }
 
-        // Recepcion consulta habitaciones y reservas, no modifica nada.
+        // Recepcion solo consulta reservas para verificar la cuenta.
         $GLOBALS['soap_cuerpo_solicitud'] = $autenticado('recepcion@test.com');
-        foreach (['consultarHabitacion', 'listarHabitaciones', 'consultarReservas'] as $operacion) {
-            $this->assertTrue(autorizarOperacionSOAP($operacion, $this->soapDb));
-        }
-        foreach (['registrarHabitacion', 'actualizarHabitacion', 'registrarReserva'] as $operacion) {
+        $this->assertTrue(autorizarOperacionSOAP('consultarReservas', $this->soapDb));
+        foreach (['registrarHabitacion', 'consultarHabitacion', 'listarHabitaciones', 'actualizarHabitacion', 'registrarReserva'] as $operacion) {
             $this->assertFalse(autorizarOperacionSOAP($operacion, $this->soapDb));
         }
 
