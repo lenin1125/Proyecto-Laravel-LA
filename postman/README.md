@@ -42,9 +42,13 @@ propia contrasena.
 | Pagar consumo | si | no | si | no |
 | Verificar checkout | si | no | si | si |
 
-- Sin token: `401`.
+- Sin token: `401` con `{"mensaje":"No autenticado. Se requiere un token Bearer valido."}`.
 - Token valido sin permiso: `403` con `{"error":"Permisos insuficientes para ejecutar este método"}`.
 - El rol se lee de la base de datos, nunca del cuerpo de la peticion.
+- El login admite 5 intentos por minuto por correo e IP; despues responde `429`
+  con `{"mensaje":"Demasiadas solicitudes. Reintente en N segundos."}`.
+- El token dura 8 horas. Si se vence, REST y SOAP responden `401` y hay que
+  ejecutar el login otra vez.
 
 ## 3. Importar y ejecutar
 
@@ -88,11 +92,11 @@ SoapUI solo necesita el usuario y el token. No envia la contrasena.
 
 1. `POST /api/login` valida el correo y la contrasena en Laravel.
 2. Laravel elimina los tokens anteriores del usuario y emite uno nuevo.
-3. El usuario, su rol y el hash SHA-256 del token se copian a `hotel_db.usuarios`.
-4. `server.php` valida usuario y token, y ademas revisa que el rol pueda ejecutar
-   la operacion solicitada.
-5. Si el par usuario/token no coincide, responde `401`. Si el rol no tiene
-   permiso para esa operacion, responde `403`.
+3. El usuario, su rol, el hash SHA-256 del token y su vencimiento en UTC se copian a `hotel_db.usuarios`.
+4. `server.php` valida usuario y token, revisa que el token no este vencido y ademas
+   comprueba que el rol pueda ejecutar la operacion solicitada.
+5. Si el par usuario/token no coincide o el token vencio, responde `401`. Si el rol no
+   tiene permiso para esa operacion, responde `403`.
 
 ## 7. Notas
 

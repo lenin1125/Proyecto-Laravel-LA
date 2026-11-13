@@ -23,8 +23,11 @@
         <env name="CACHE_DRIVER" value="array"/>
         <env name="DB_CONNECTION" value="mysql"/>
         <env name="DB_DATABASE" value="hotel_consumos_api_test"/>
+        <env name="LOGIN_DECAY_MINUTES" value="1"/>
+        <env name="LOGIN_MAX_ATTEMPTS" value="100"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
+        <env name="SANCTUM_EXPIRATION" value="480"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
     </php>

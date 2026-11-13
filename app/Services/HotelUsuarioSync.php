@@ -82,6 +82,11 @@ class HotelUsuarioSync
         $pdo = $this->conexion();
         $token = hash('sha256', $token);
 
+        // El servidor SOAP aplica la misma vigencia que Laravel: la fecha se
+        // guarda en UTC para compararla sin ambiguedades de zona horaria.
+        $minutos = $this->minutosDeVigencia();
+        $expira = $minutos > 0 ? gmdate('Y-m-d H:i:s', time() + $minutos * 60) : null;
+
         // Busca si el usuario ya existe en la tabla usuarios de hotel_db.
         $consulta = $pdo->prepare('SELECT id FROM usuarios WHERE username = ? LIMIT 1');
 
@@ -93,13 +98,13 @@ class HotelUsuarioSync
 
         // Comprueba si el usuario ya estaba registrado en hotel_db.
         if ($existente !== false) {
-            // Actualiza el hash de la contrasena y el token vigente.
+            // Actualiza el hash de la contrasena, el token vigente y su vencimiento.
             $update = $pdo->prepare(
-                'UPDATE usuarios SET password = ?, api_token = ?, role = ? WHERE id = ?'
+                'UPDATE usuarios SET password = ?, api_token = ?, role = ?, token_expira_en = ? WHERE id = ?'
             );
 
             // Ejecuta la actualizacion sobre el registro encontrado.
-            $update->execute([$passwordHash, $token, $role, (int) $existente['id']]);
+            $update->execute([$passwordHash, $token, $role, $expira, (int) $existente['id']]);
 
             // Termina la sincronizacion porque el usuario ya existia.
             return;
@@ -107,12 +112,27 @@ class HotelUsuarioSync
 
         // Inserta un usuario nuevo con su token asociado.
         $insert = $pdo->prepare(
-            'INSERT INTO usuarios (username, password, api_token, role, created_at)
-             VALUES (?, ?, ?, ?, NOW())'
+            'INSERT INTO usuarios (username, password, api_token, role, token_expira_en, created_at)
+             VALUES (?, ?, ?, ?, ?, NOW())'
         );
 
         // Ejecuta la insercion del usuario en hotel_db.
-        $insert->execute([$usuario, $passwordHash, $token, $role]);
+        $insert->execute([$usuario, $passwordHash, $token, $role, $expira]);
+    }
+
+    /**
+     * Minutos de vigencia del token emitido por Sanctum.
+     *
+     * Se lee de config/sanctum.php. El valor 0 desactiva el vencimiento.
+     */
+    protected function minutosDeVigencia(): int
+    {
+        // Las pruebas unitarias de este servicio no arrancan la aplicacion.
+        $configurado = function_exists('app') && app()->bound('config')
+            ? config('sanctum.expiration', 480)
+            : 480;
+
+        return max(0, (int) $configurado);
     }
 
     /**

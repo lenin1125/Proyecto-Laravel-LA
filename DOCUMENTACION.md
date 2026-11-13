@@ -2,6 +2,7 @@
 
 > Revisión inicial: 09/11/2026 (solo lectura).
 > Actualización: 11/11/2026. Se implementaron roles, middlewares de permisos y autorización SOAP por rol.
+> Actualización: 13/11/2026. Se agregaron throttle de login, vencimiento de tokens y formato de error homogéneo.
 > Los puntos marcados como **corregido** ya están en el código y cubiertos por pruebas.
 
 ---
@@ -27,8 +28,9 @@ API REST en **Laravel 10 / PHP 8.1** para registrar y cobrar consumos extras de 
 - `hotel_consumos_api`: 7 tablas.
 - `hotel_db`: 4 tablas (`habitacion`, `huesped`, `reserva`, `usuarios`).
 - Git inicializado en los dos proyectos; etiqueta base `linea-base` y commits por bloque.
-- 43 pruebas automatizadas en verde (176 aserciones).
+- 55 pruebas automatizadas en verde (220 aserciones).
 - Zona horaria `America/Bogota` (UTC-5), igual que el sistema y MySQL.
+- Login limitado a 5 intentos por minuto por correo e IP; token con vigencia de 8 horas, aplicada también en SOAP.
 
 ---
 
@@ -92,16 +94,18 @@ Archivo principal: `app/Http/Controllers/Api/AuthController.php`.
 
 1. Valida `email` (máx. 50), `password` (obligatorio) y `dispositivo` (opcional, máx. 50).
 2. Busca el usuario en `users` y compara con `Hash::check`.
-3. Abre una transacción local:
+3. El intento consume el límite `throttle:login`: **5 peticiones por minuto por correo e IP**. Al superarlo responde `429` con `{"mensaje": "Demasiadas solicitudes. Reintente en N segundos."}` y cabecera `Retry-After`. Se configura con `LOGIN_MAX_ATTEMPTS` y `LOGIN_DECAY_MINUTES`.
+4. Abre una transacción local:
    - bloquea la fila del usuario (`lockForUpdate`);
    - **elimina todos los tokens anteriores** (`tokens()->delete()`);
-   - crea un token Sanctum nuevo con nombre `dispositivo` o `"soapui"`;
+   - crea un token Sanctum nuevo con nombre `dispositivo` o `"soapui"` y vencimiento de **480 minutos (8 horas)**, configurable con `SANCTUM_EXPIRATION`;
    - llama a `HotelUsuarioSync::sincronizar(email, password_hash, token_plano, role)`.
-4. `HotelUsuarioSync` abre una conexión **PDO directa** a `hotel_db` reutilizando host, puerto, usuario y clave de la conexión MySQL de Laravel:
-   - si el usuario existe en `hotel_db.usuarios`, actualiza `password`, `api_token` y `role`;
+5. `HotelUsuarioSync` abre una conexión **PDO directa** a `hotel_db` reutilizando host, puerto, usuario y clave de la conexión MySQL de Laravel:
+   - si el usuario existe en `hotel_db.usuarios`, actualiza `password`, `api_token`, `role` y `token_expira_en`;
    - si no existe, lo inserta;
-   - guarda **SHA-256 del token**, no el token plano.
-5. Devuelve:
+   - guarda **SHA-256 del token**, no el token plano;
+   - `token_expira_en` se guarda en UTC para que el servidor SOAP aplique la misma vigencia.
+6. Devuelve:
 
 ```json
 {
@@ -111,17 +115,17 @@ Archivo principal: `app/Http/Controllers/Api/AuthController.php`.
   "token_type": "Bearer",
   "soap_username": "administrador@hotel.test",
   "soap_token": "...",
-  "expira": null
+  "expira": "2026-11-13T22:34:46-05:00"
 }
 ```
 
-6. Si falla cualquier cosa de la sincronización → `503` y se revierte la transacción local, conservando el token anterior.
+7. Si falla cualquier cosa de la sincronización → `503` y se revierte la transacción local, conservando el token anterior.
 
 > **Consecuencia:** solo hay una sesión activa por usuario. Cada login invalida el token anterior en Laravel **y** en `hotel_db`, por lo que SoapUI debe actualizarse tras cada login.
 
 ### 3.2 `GET /api/me`
 
-Devuelve `id`, `nombre`, `email`, `rol` y `soap_username` del usuario autenticado. `rol` puede ser `null` si la cuenta no tiene rol asignado.
+Devuelve `id`, `nombre`, `email`, `rol`, `soap_username` y `expira` del token actual. `rol` puede ser `null` si la cuenta no tiene rol asignado. El token deja de autenticar al cumplirse la vigencia, tanto en REST como en SOAP.
 
 ### 3.3 `POST /api/logout`
 
@@ -220,13 +224,31 @@ Todas las rutas están en `routes/api.php`. Prefijo `/api`.
 
 | Método | Ruta | Auth | Rol permitido | Qué hace | Códigos |
 |---|---|---|---|---|---|
-| POST | `/login` | No | — | Genera token y sincroniza con SOAP | 200, 401, 422, 503 |
+| POST | `/login` | No | — | Genera token y sincroniza con SOAP | 200, 401, 422, 429, 503 |
 | GET | `/me` | Bearer | cualquiera autenticado | Datos del usuario y su rol | 200, 401 |
 | POST | `/logout` | Bearer | cualquiera autenticado | Revoca token local y remoto | 200, 401, 503 |
 | POST | `/consumos` | Bearer | admin, servicio | Valida reserva en SOAP y registra consumo | 201, 400, 404, 422, 401, 403, 503 |
 | GET | `/consumos/reserva/{id_reserva}` | Bearer | admin, servicio, recepción | Consumos + datos de reserva desde SOAP | 200, 401, 403, 503 |
 | POST | `/consumos/{id}/pagar` | Bearer | admin, cajero | Marca consumo como pagado y registra pago | 200, 404, 409, 422, 401, 403 |
 | GET | `/checkout-status/{id_reserva}` | Bearer | admin, cajero, recepción | Saldo pendiente y paz y salvo | 200, 401, 403 |
+
+### Formato de errores
+
+Todas las respuestas de error usan la clave `mensaje`:
+
+| Código | Cuerpo |
+|---|---|
+| 400 | `{"mensaje":"..."}` |
+| 401 | `{"mensaje":"No autenticado. Se requiere un token Bearer valido."}` |
+| 403 | `{"error":"Permisos insuficientes para ejecutar este método"}` (contrato exigido) |
+| 404 | `{"mensaje":"Recurso no encontrado."}` o el mensaje de negocio |
+| 405 | `{"mensaje":"Metodo no permitido para esta ruta."}` |
+| 409 | `{"mensaje":"Este consumo ya se encuentra pagado"}` |
+| 422 | `{"mensaje":"Los datos enviados no son validos.","errors":{...}}` |
+| 429 | `{"mensaje":"Demasiadas solicitudes. Reintente en N segundos."}` |
+| 503 | `{"mensaje":"..."}` |
+
+El `403` conserva `error` porque ese cuerpo exacto forma parte del requerimiento. `errors` se mantiene en el `422` porque es el formato estándar de Laravel para el detalle por campo.
 
 ### Reglas de negocio de consumos
 
@@ -267,9 +289,9 @@ Relación: `Consumo 1 ── N PagoConsumo` (`consumo_id`).
 | `habitacion` | Habitaciones |
 | `huesped` | Huéspedes |
 | `reserva` | Reservas; `estado` por defecto `CONFIRMADA`, pero el alta de la app inserta `ACTIVA` |
-| `usuarios` | `id`, `username` (varchar 50, único), `password`, `api_token` (varchar 80, único, nullable), `role` (varchar 30, nullable), `created_at` |
+| `usuarios` | `id`, `username` (varchar 50, único), `password`, `api_token` (varchar 80, único, nullable), `role` (varchar 30, nullable), `token_expira_en` (datetime UTC, nullable), `created_at` |
 
-> `hotel_db.sql` ya crea `usuarios` con `role`, así que un entorno nuevo puede autenticarse y autorizar sin pasos manuales. En una base existente hay que agregar la columna con `ALTER TABLE usuarios ADD COLUMN role VARCHAR(30) NULL AFTER api_token;` si todavía no está.
+> `hotel_db.sql` ya crea `usuarios` con `role` y `token_expira_en`, así que un entorno nuevo puede autenticarse y autorizar sin pasos manuales. En una base existente hay que agregar las columnas con `ALTER TABLE usuarios ADD COLUMN role VARCHAR(30) NULL AFTER api_token;` y `ALTER TABLE usuarios ADD COLUMN token_expira_en DATETIME NULL AFTER role;` si todavía no están.
 
 ---
 
@@ -284,7 +306,12 @@ Relación: `Consumo 1 ── N PagoConsumo` (`consumo_id`).
 | `SOAP_WSDL_URL` | Opcional; si falta se usa `SOAP_SERVICE_URL?wsdl` |
 | `SOAP_TIMEOUT` | Timeout de llamadas SOAP |
 | `SOAP_DB_DATABASE` | Nombre de la BD del servidor SOAP (`hotel_db`) |
+| `SANCTUM_EXPIRATION` | Minutos de vigencia del token Bearer (480 por defecto) |
+| `LOGIN_MAX_ATTEMPTS` | Intentos de login por correo e IP dentro de la ventana (5 por defecto) |
+| `LOGIN_DECAY_MINUTES` | Minutos de la ventana del throttle de login (1 por defecto) |
 | `APP_KEY`, `APP_ENV`, `APP_DEBUG`, `APP_URL`, `LOG_*` | Framework |
+
+El servidor SOAP aplica la misma vigencia con `SOAP_TOKEN_EXPIRATION_MINUTES` (480 por defecto) leída desde el entorno del proceso PHP del proyecto `hotel`. Si se cambia `SANCTUM_EXPIRATION`, hay que cambiar también ese valor para que ambos lados coincidan.
 
 ### Configuración de pruebas (`phpunit.xml`)
 
@@ -292,6 +319,8 @@ Relación: `Consumo 1 ── N PagoConsumo` (`consumo_id`).
 - Base de datos MySQL `hotel_consumos_api_test`
 - Cache, sesión y cola en memoria
 - `BCRYPT_ROUNDS=4`
+- `LOGIN_MAX_ATTEMPTS=100` para que las pruebas no choquen con el throttle real (la prueba del límite lo baja a 3)
+- `SANCTUM_EXPIRATION=480`
 
 ### Diferencias de entorno detectadas
 
@@ -339,15 +368,18 @@ Usuarios de demostración (`UsuarioRolSeeder`):
 | `tests/Feature/RoleAccessTest.php` | 11 | Matriz 4x4 de permisos, `401` sin token, rol `null`, cuerpo exacto del `403`, rol falsificado en el body y rol sin permiso no llega a SOAP |
 | `tests/Feature/SoapFallbackTest.php` | 4 | SOAP caído devuelve `503` y no `404` |
 | `tests/Feature/SoapServiceTest.php` | 1 | Exige token para crear cliente SOAP |
-| `tests/Feature/SoapTokenTest.php` | 4 | Flujo real contra `C:\laragon\www\hotel\auth.php`, mapa de permisos SOAP, detección de la operación y formatos inválidos |
+| `tests/Feature/FormatoErroresTest.php` | 6 | `mensaje` en 401, 404, 405, 422 y 404 de negocio; el 403 conserva `error` |
+| `tests/Feature/LoginThrottleTest.php` | 3 | Bloqueo tras varios intentos fallidos, contador por correo y login válido dentro del límite |
+| `tests/Feature/TokenExpiracionTest.php` | 2 | El login anuncia `expira`, el token vence a las 8 horas y la fecha queda en `expires_at` |
+| `tests/Feature/SoapTokenTest.php` | 5 | Flujo real contra `C:\laragon\www\hotel\auth.php`, mapa de permisos SOAP, detección de la operación, formatos inválidos y token vencido |
 | `tests/Feature/ZonaHorariaTest.php` | 1 | La app usa `America/Bogota` y un desfase de `-05:00` |
-| `tests/Unit/HotelUsuarioSyncTest.php` | 1 | Guarda SHA-256 y el rol, y revoca solo el token presentado |
+| `tests/Unit/HotelUsuarioSyncTest.php` | 1 | Guarda SHA-256, rol y vencimiento, y revoca solo el token presentado |
 | `tests/Unit/ExampleTest.php` | 1 | `assertTrue(true)` — scaffold |
 | `tests/Feature/ExampleTest.php` | 1 | `GET /` responde 200 — scaffold |
 
-**Total: 43 pruebas, 176 aserciones, en verde.**
+**Total: 55 pruebas, 220 aserciones, en verde.**
 
-**No cubierto:** concurrencia real de pagos, expiración de tokens, cambio de rol a mitad de sesión (queda forzado por la revocación) y pruebas de carga.
+**No cubierto:** concurrencia real de pagos, límite distribuido entre varios servidores y pruebas de carga.
 
 **Acoplamiento:** `SoapTokenTest` hace `require_once` de `C:\laragon\www\hotel\auth.php`, fuera de este proyecto. Si se mueve la carpeta hermana, la prueba falla.
 
@@ -423,6 +455,12 @@ Dentro de `config/services.php`, las secciones `mailgun`, `postmark` y `ses` no 
 14. **Zona horaria `America/Bogota`** (UTC-5), alineada con la hora del sistema y de MySQL. Los timestamps de Laravel y los valores por defecto de MySQL coinciden con la hora local del hotel.
 15. **Dependencias actualizadas:** `laravel/framework` 10.50.3 → 10.50.4 y componentes Symfony 6.4.46-6.4.48 → 6.4.49-6.4.50. Se corrigieron las advisories con parche disponible en esas ramas.
 
+**13/11/2026**
+
+16. **Throttle específico de login:** 5 intentos por minuto por correo e IP. Al superarlo responde `429` con `mensaje` y `Retry-After`. Se configura con `LOGIN_MAX_ATTEMPTS` y `LOGIN_DECAY_MINUTES`.
+17. **Tokens con vencimiento:** 480 minutos (8 horas) mediante `SANCTUM_EXPIRATION`. El login devuelve `expira` y cada token guarda `expires_at`. El servidor SOAP aplica la misma vigencia con `token_expira_en` en `hotel_db.usuarios`; un token vencido recibe `401` tanto en REST como en SOAP.
+18. **Formato de error homogenizado:** todas las respuestas usan `mensaje` (`401`, `404`, `405`, `409`, `422`, `429`, `503`). El `403` conserva `error` por contrato y el `422` conserva `errors` para el detalle por campo.
+
 ### 11.2 Pendientes
 
 **Prioridad alta**
@@ -435,8 +473,8 @@ Dentro de `config/services.php`, las secciones `mailgun`, `postmark` y `ses` no 
 3. **Sin paginación** en `GET /api/consumos/reserva/{id}`.
 4. **`SoapService` depende de `request()`**; no se puede reutilizar desde un job o comando.
 5. **`obtenerReserva` descarga todas las reservas y filtra en PHP**, en lugar de pedir una por ID.
-6. **Tokens sin expiración** y solo el throttle global de 60 req/min; no hay límite específico de intentos de login.
-7. **Las pruebas dependen de MySQL real** (`hotel_consumos_api_test`) y de la carpeta hermana `C:\laragon\www\hotel`.
+6. **Vigencia de tokens duplicada en dos proyectos.** Laravel controla el vencimiento con `SANCTUM_EXPIRATION` y el servidor SOAP con `SOAP_TOKEN_EXPIRATION_MINUTES`; si se cambia uno, hay que cambiar el otro. Además, el throttle usa la caché configurada (`file` en local): con varios servidores habría que usar una caché compartida (Redis) o un límite en el balanceador.
+7. **Las pruebas dependen de MySQL real** (`hotel_consumos_api_test`) y de la carpeta hermana `C:\laragon\www\hotel`. Ahora `HotelUsuarioSyncTest` no arranca la aplicación y usa SQLite en memoria, pero el resto conserva ese acoplamiento.
 8. **Advisories sin parche en Laravel 10.** `composer.json` declara `config.policy.advisories.ignore-id` para cuatro avisos que ninguna version 10.x corrige: CRLF en la regla `email`, path confusion en URLs firmadas, XSS en la pagina de debug y una variante del mismo CRLF. Mitigaciones: la app no envia correos ni usa URLs firmadas, y en produccion `APP_DEBUG` debe ser `false`. Actualizar a Laravel 11 o 12 requiere PHP 8.2 o superior (hoy hay 8.1.10).
 
 **Prioridad baja**
@@ -495,5 +533,8 @@ Dentro de `config/services.php`, las secciones `mailgun`, `postmark` y `ses` no 
 | Rol `null` bloqueado | `lenin@hotel.test` y `prueba@hotel.test` reciben `403` |
 | Autorización en SOAP | Mapa por rol; operaciones desconocidas denegadas por defecto |
 | Cambio de rol | Revoca tokens y exige login nuevo |
+| Throttle de login | 5 intentos por minuto por correo e IP; `429` con `mensaje` y `Retry-After` |
+| Vencimiento del token | 480 minutos (8 h) en REST y en SOAP mediante `token_expira_en` |
+| Formato de error | `mensaje` en todos los codigos, salvo el `403`, que conserva `error` por contrato |
 
 **Estado:** todos los requisitos acordados quedaron implementados. Los riesgos residuales estan en la seccion 11.2.

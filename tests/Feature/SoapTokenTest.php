@@ -21,7 +21,7 @@ class SoapTokenTest extends TestCase
         require_once dirname(__DIR__, 3).'/hotel/auth.php';
         $GLOBALS['soap_cuerpo_solicitud'] = '';
         $this->soapDb = new PDO('sqlite::memory:');
-        $this->soapDb->exec('CREATE TABLE usuarios (username TEXT PRIMARY KEY, api_token TEXT, role TEXT)');
+        $this->soapDb->exec('CREATE TABLE usuarios (username TEXT PRIMARY KEY, api_token TEXT, role TEXT, token_expira_en TEXT)');
     }
 
     private function xml(string $usuario, string $token): string
@@ -153,5 +153,21 @@ class SoapTokenTest extends TestCase
         foreach ($invalidos as $invalido) {
             $this->assertNull(obtenerCredencialesWsSecurity($invalido)['token']);
         }
+    }
+
+    public function test_el_token_vencido_no_se_acepta_en_soap(): void
+    {
+        $token = '1|tokenVigente';
+        $this->soapDb->prepare('INSERT INTO usuarios (username, api_token, role, token_expira_en) VALUES (?, ?, ?, ?)')
+            ->execute(['ana@test.com', hash('sha256', $token), 'administrador', gmdate('Y-m-d H:i:s', time() + 3600)]);
+
+        // Vigente: el token se acepta.
+        $this->assertTrue(validarUsuarioTokenBD('ana@test.com', $token, $this->soapDb));
+
+        // Vencido: mismo token, misma fila, pero la fecha ya paso.
+        $this->soapDb->prepare('UPDATE usuarios SET token_expira_en = ? WHERE username = ?')
+            ->execute([gmdate('Y-m-d H:i:s', time() - 60), 'ana@test.com']);
+
+        $this->assertFalse(validarUsuarioTokenBD('ana@test.com', $token, $this->soapDb));
     }
 }

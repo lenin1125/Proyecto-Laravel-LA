@@ -17,7 +17,7 @@ class HotelUsuarioSyncTest extends TestCase
             $pdo = new PDO('sqlite::memory:');
             $pdo->sqliteCreateFunction('NOW', fn () => '2026-11-05 00:00:00');
         }
-        $pdo->exec('CREATE TABLE usuarios (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, api_token TEXT, role TEXT, created_at TEXT)');
+        $pdo->exec('CREATE TABLE usuarios (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, api_token TEXT, role TEXT, token_expira_en TEXT, created_at TEXT)');
         $sync = new class($pdo) extends HotelUsuarioSync
         {
             public function __construct(private PDO $pdo) {}
@@ -30,6 +30,8 @@ class HotelUsuarioSyncTest extends TestCase
         $sync->sincronizar('ana@test.com', 'password-hash', '1|primer-token', 'cajero');
         $this->assertSame(hash('sha256', '1|primer-token'), $pdo->query('SELECT api_token FROM usuarios')->fetchColumn());
         $this->assertSame('cajero', $pdo->query('SELECT role FROM usuarios')->fetchColumn());
+        $expira = $pdo->query('SELECT token_expira_en FROM usuarios')->fetchColumn();
+        $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', (string) $expira);
         $sync->sincronizar('ana@test.com', 'password-hash', '2|nuevo-token', 'recepcionista');
         $this->assertSame('recepcionista', $pdo->query('SELECT role FROM usuarios')->fetchColumn());
         $sync->revocar('ana@test.com', '1|primer-token');

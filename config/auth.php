@@ -112,4 +112,19 @@ return [
 
     'password_timeout' => 10800,
 
+    /*
+    |--------------------------------------------------------------------------
+    | Limite de intentos de inicio de sesion
+    |--------------------------------------------------------------------------
+    |
+    | Evita ataques de fuerza bruta contra POST /api/login. El limite se cuenta
+    | por correo y direccion IP, y se reinicia al pasar la ventana indicada.
+    |
+    */
+
+    'login_throttle' => [
+        'max_attempts' => (int) env('LOGIN_MAX_ATTEMPTS', 5),
+        'decay_minutes' => (int) env('LOGIN_DECAY_MINUTES', 1),
+    ],
+
 ];

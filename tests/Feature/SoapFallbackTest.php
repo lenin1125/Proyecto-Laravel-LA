@@ -34,7 +34,7 @@ class SoapFallbackTest extends TestCase
             'concepto' => 'Cena',
             'monto' => 10,
         ])->assertStatus(503)
-            ->assertJsonPath('error', 'El servicio SOAP no esta disponible');
+            ->assertJsonPath('mensaje', 'El servicio SOAP no esta disponible');
     }
 
     public function test_por_reserva_devuelve_503_si_soap_no_responde(): void
@@ -44,7 +44,7 @@ class SoapFallbackTest extends TestCase
 
         $this->getJson('/api/consumos/reserva/1')
             ->assertStatus(503)
-            ->assertJsonPath('error', 'El servicio SOAP no esta disponible');
+            ->assertJsonPath('mensaje', 'El servicio SOAP no esta disponible');
     }
 
     public function test_store_devuelve_404_si_la_reserva_no_existe(): void

@@ -31,7 +31,8 @@ use Illuminate\Support\Facades\Route;
 */
 
 // Genera un token nuevo a partir del correo y la contrasena del usuario.
-Route::post('/login', [AuthController::class, 'login']);
+// El limite de intentos evita la fuerza bruta: 5 por minuto por correo e IP.
+Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
 
 // Devuelve los datos del usuario autenticado con el token Bearer.
 Route::middleware('auth:sanctum')->get('/me', [AuthController::class, 'me']);

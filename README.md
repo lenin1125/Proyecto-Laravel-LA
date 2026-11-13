@@ -29,11 +29,14 @@ Ajustar en `.env`:
 | `SOAP_SERVICE_URL` | URL base del servidor SOAP |
 | `SOAP_DB_DATABASE` | Base del servidor SOAP (`hotel_db`) |
 | `SOAP_TIMEOUT` | Timeout de las llamadas SOAP |
+| `SANCTUM_EXPIRATION` | Minutos de vigencia del token (480 por defecto) |
+| `LOGIN_MAX_ATTEMPTS` | Intentos de login por correo e IP (5 por defecto) |
+| `LOGIN_DECAY_MINUTES` | Minutos de la ventana del throttle (1 por defecto) |
 
 La zona horaria es `America/Bogota` (UTC-5) y esta en `config/app.php`.
 
-`hotel_db.sql` crea la tabla `usuarios` con su columna `role`, asi que un entorno
-nuevo solo necesita importar ese script antes del primer login.
+`hotel_db.sql` crea la tabla `usuarios` con las columnas `role` y `token_expira_en`,
+asi que un entorno nuevo solo necesita importar ese script antes del primer login.
 
 ## Endpoints
 
@@ -60,13 +63,26 @@ Cada accion de negocio exige un rol distinto:
 | Pagar consumo | si | no | si | no |
 | Verificar checkout | si | no | si | si |
 
-- Sin token: `401`.
+- Sin token: `401` con `{"mensaje":"No autenticado. Se requiere un token Bearer valido."}`.
 - Token valido sin permiso: `403` con `{"error":"Permisos insuficientes para ejecutar este método"}`.
 - Un usuario sin rol queda bloqueado en las cuatro acciones.
 - Pagar dos veces el mismo consumo devuelve `409 Conflict`.
 
 Los usuarios de demostracion se crean con `php artisan db:seed` y comparten la
 contrasena `123456`. El detalle esta en `postman/README.md`.
+
+## Seguridad
+
+- `POST /api/login` admite 5 intentos por minuto por correo e IP. Al superarlo responde
+  `429` con `Retry-After` y `{"mensaje":"Demasiadas solicitudes. Reintente en N segundos."}`.
+  Se ajusta con `LOGIN_MAX_ATTEMPTS` y `LOGIN_DECAY_MINUTES`.
+- El token vence a los 480 minutos (8 horas). `/api/login` y `/api/me` devuelven `expira`
+  en formato ISO 8601. Se ajusta con `SANCTUM_EXPIRATION`.
+- El servidor SOAP aplica la misma vigencia con `SOAP_TOKEN_EXPIRATION_MINUTES` (480 por
+  defecto). Si cambia una, cambie la otra.
+- Todas las respuestas de error usan `mensaje`; el `403` conserva `error` porque es el
+  cuerpo exacto exigido.
+- En produccion configure `APP_DEBUG=false`.
 
 ## Pruebas
 

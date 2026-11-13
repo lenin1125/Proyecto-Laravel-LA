@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Laravel\Sanctum\PersonalAccessToken;
 use Throwable;
 
 class AuthController extends Controller
@@ -26,11 +27,17 @@ class AuthController extends Controller
             return response()->json(['mensaje' => 'Credenciales invalidas.'], 401);
         }
 
+        $expira = now()->addMinutes($this->minutosDeVigencia());
+
         try {
-            $token = DB::transaction(function () use ($usuario, $datos, $sync): string {
+            $token = DB::transaction(function () use ($usuario, $datos, $sync, $expira): string {
                 $usuario = User::whereKey($usuario->id)->lockForUpdate()->firstOrFail();
                 $usuario->tokens()->delete();
-                $token = $usuario->createToken($datos['dispositivo'] ?? 'soapui')->plainTextToken;
+                $token = $usuario->createToken(
+                    $datos['dispositivo'] ?? 'soapui',
+                    ['*'],
+                    $expira
+                )->plainTextToken;
                 $sync->sincronizar($usuario->email, $usuario->password, $token, $usuario->role);
 
                 return $token;
@@ -48,15 +55,37 @@ class AuthController extends Controller
             'token_type' => 'Bearer',
             'soap_username' => $usuario->email,
             'soap_token' => $token,
-            'expira' => null,
+            'expira' => $expira->toIso8601String(),
         ])->header('Cache-Control', 'no-store');
     }
 
     public function me(Request $request): JsonResponse
     {
         $usuario = $request->user();
+        $token = $request->user()->currentAccessToken();
+        $expira = null;
 
-        return response()->json(['id' => $usuario->id, 'nombre' => $usuario->name, 'email' => $usuario->email, 'rol' => $usuario->role, 'soap_username' => $usuario->email]);
+        if ($token instanceof PersonalAccessToken && $token->exists) {
+            $expira = ($token->expires_at ?? $token->created_at?->copy()->addMinutes($this->minutosDeVigencia()))
+                ?->toIso8601String();
+        }
+
+        return response()->json([
+            'id' => $usuario->id,
+            'nombre' => $usuario->name,
+            'email' => $usuario->email,
+            'rol' => $usuario->role,
+            'soap_username' => $usuario->email,
+            'expira' => $expira,
+        ]);
+    }
+
+    /**
+     * Minutos de vigencia del token, tomados de config/sanctum.php.
+     */
+    private function minutosDeVigencia(): int
+    {
+        return max(1, (int) config('sanctum.expiration', 480));
     }
 
     public function logout(Request $request, HotelUsuarioSync $sync): JsonResponse

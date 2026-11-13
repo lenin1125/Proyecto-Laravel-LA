@@ -44,9 +44,13 @@ return [
     | considered expired. If this value is null, personal access tokens do
     | not expire. This won't tweak the lifetime of first-party sessions.
     |
+    | Aqui se usa 480 minutos (8 horas) por defecto; se puede cambiar con la
+    | variable SANCTUM_EXPIRATION. El servidor SOAP aplica la misma vigencia
+    | a traves de hotel_db.usuarios.token_expira_en.
+    |
     */
 
-    'expiration' => null,
+    'expiration' => (int) env('SANCTUM_EXPIRATION', 480),
 
     /*
     |--------------------------------------------------------------------------

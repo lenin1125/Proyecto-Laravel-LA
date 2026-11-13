@@ -36,13 +36,13 @@ class ConsumoController extends Controller
             $reserva = $this->soapService->obtenerReserva($datos['id_reserva']);
         } catch (SoapUnavailableException $e) {
             return response()->json([
-                'error' => 'El servicio SOAP no esta disponible'
+                'mensaje' => 'El servicio SOAP no esta disponible'
             ], 503);
         }
 
         if (!$reserva) {
             return response()->json([
-                'error' => 'La reserva especificada no existe en el sistema SOAP'
+                'mensaje' => 'La reserva especificada no existe en el sistema SOAP'
             ], 404);
         }
 
@@ -50,7 +50,7 @@ class ConsumoController extends Controller
         $estadoReserva = strtolower($reserva->estado ?? '');
         if ($estadoReserva !== 'activo' && $estadoReserva !== 'activa') {
             return response()->json([
-                'error' => 'No se pueden cargar consumos a una reserva que no está Activa'
+                'mensaje' => 'No se pueden cargar consumos a una reserva que no está Activa'
             ], 400);
         }
 
@@ -82,7 +82,7 @@ class ConsumoController extends Controller
             $reservaSoap = $this->soapService->obtenerReserva($id_reserva);
         } catch (SoapUnavailableException $e) {
             return response()->json([
-                'error' => 'El servicio SOAP no esta disponible'
+                'mensaje' => 'El servicio SOAP no esta disponible'
             ], 503);
         }
 
@@ -112,7 +112,7 @@ class ConsumoController extends Controller
             if (!$consumo) {
                 return [
                     'codigo' => 404,
-                    'cuerpo' => ['error' => 'Consumo no encontrado'],
+                    'cuerpo' => ['mensaje' => 'Consumo no encontrado'],
                 ];
             }
 
