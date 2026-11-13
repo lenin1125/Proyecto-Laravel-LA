@@ -12,6 +12,13 @@ enunciado final de la profesora:
   y recepcionista, y bloqueado para el cajero;
 - pagos, checkout, validaciones y errores controlados.
 
+El orden recomendado para la presentacion es:
+
+1. **Postman** para login, `/me`, matriz REST y flujo de consumos.
+2. **SoapUI** para probar el token y el rol directamente contra SOAP.
+3. **PowerShell** solo si se quiere mostrar el codigo HTTP exacto sin interfaz.
+4. **PHPUnit** como evidencia de regresion.
+
 No se necesita instalar nada nuevo si Laragon ya publica los dos proyectos.
 
 ---
@@ -91,10 +98,399 @@ Debe ver `login`, `me`, `logout`, `registrarConsumo`, `consultarEstadoCuenta`,
 
 ---
 
-## 2. Prueba rapida con PowerShell
+## 2. Demostracion con Postman
 
-Los ejemplos usan Windows PowerShell. Pegue esta funcion al inicio de la
-sesion: devuelve el codigo HTTP y el cuerpo aunque la respuesta sea un error.
+Esta es la parte principal de la presentacion. Postman demuestra el login, el
+token, el rol y la matriz REST.
+
+### 2.1 Importar los archivos
+
+1. Abra Postman.
+2. Importe los tres archivos de `postman/`:
+   - `Hotel API - Token para SoapUI.postman_collection.json`;
+   - `Hotel API - Permisos por rol.postman_collection.json`;
+   - `Hotel Local.postman_environment.json`.
+3. Seleccione el entorno `Hotel Local`.
+4. Verifique que `base_url` sea `http://hotel-consumos-api.test`.
+
+### 2.2 Login por rol
+
+1. Abra la coleccion **Hotel API - Permisos por rol**.
+2. Abra la carpeta **0. Login por rol**.
+3. Ejecute las cuatro peticiones o use **Run folder**.
+
+Cada peticion envia:
+
+```json
+{
+  "usuario": "administrador",
+  "password": "123456",
+  "dispositivo": "postman-admin"
+}
+```
+
+Valores de `usuario`:
+
+| Peticion | Usuario | Token que guarda |
+|---|---|---|
+| Login administrador | `administrador` | `admin_token` |
+| Login servicio_habitacion | `servicio_habitacion` | `servicio_token` |
+| Login cajero | `cajero` | `cajero_token` |
+| Login recepcionista | `recepcionista` | `recepcion_token` |
+
+Cada una debe responder `200`. En el cuerpo verifique:
+
+```json
+{
+  "mensaje": "Autenticacion exitosa.",
+  "usuario": {
+    "id": 1,
+    "nombre": "Administrador",
+    "usuario": "administrador",
+    "email": "administrador@hotel.test",
+    "rol": "administrador"
+  },
+  "token": "...",
+  "token_type": "Bearer",
+  "soap_username": "administrador",
+  "soap_token": "...",
+  "expira": "2026-11-13T22:34:46-05:00"
+}
+```
+
+Los dos datos que se usan despues en SoapUI son:
+
+- `token` (el Bearer de la sesion);
+- `soap_username` (el nombre de usuario, no el correo).
+
+El login tambien acepta `email` en lugar de `usuario`:
+
+```json
+{
+  "email": "administrador@hotel.test",
+  "password": "123456"
+}
+```
+
+### 2.3 Verificar el perfil con `/me`
+
+1. Abra la coleccion **Hotel API - Token para SoapUI**.
+2. Ejecute primero el login de esa coleccion.
+3. Ejecute `GET /api/me`.
+
+Debe responder `200` con:
+
+```json
+{
+  "id": 1,
+  "nombre": "Administrador",
+  "usuario": "administrador",
+  "email": "administrador@hotel.test",
+  "rol": "administrador",
+  "soap_username": "administrador",
+  "expira": "2026-11-13T22:34:46-05:00"
+}
+```
+
+Si quiere probarlo con otro rol, cambie el `usuario` del login, vuelva a
+ejecutarlo y repita `/me`.
+
+### 2.4 Prueba 401: sin token o token invalido
+
+1. Abra `GET /api/me`.
+2. En la pestana **Authorization**, seleccione `No Auth` o borre la cabecera.
+3. Envie la peticion.
+
+Esperado:
+
+```json
+{"mensaje":"No autenticado. Se requiere un token Bearer valido."}
+```
+
+Codigo: `401`. No debe ser `403`: primero se valida el token y despues el rol.
+
+Repita con un token inventado en `Authorization: Bearer token-invalido`.
+Tambien debe responder `401`.
+
+### 2.5 Matriz de permisos
+
+1. Ejecute la carpeta **1. Matriz de permisos**.
+2. Son 16 peticiones, una por combinacion de rol y accion.
+3. Todas deben quedar en verde.
+
+La tabla que debe cumplirse es:
+
+| Accion | administrador | servicio_habitacion | cajero | recepcionista |
+|---|---|---|---|---|
+| Registrar consumo (`POST /api/consumos`) | si | si | no | no |
+| Consultar estado de cuenta (`GET /api/consumos/reserva/{id}`) | si | si | no | si |
+| Pagar consumo (`POST /api/consumos/{id}/pagar`) | si | no | si | no |
+| Verificar checkout (`GET /api/checkout-status/{id}`) | si | no | si | si |
+
+Cada peticion comprueba:
+
+- si el rol esta permitido, la respuesta **no** es `403`;
+- si el rol no esta permitido, la respuesta es `403` con el cuerpo exacto.
+
+### 2.6 Verificar el cuerpo exacto del 403
+
+Abra una peticion no permitida, por ejemplo **Registrar consumo - cajero**, y
+enviela. Debe responder `403` con:
+
+```json
+{ "error": "Permisos insuficientes para ejecutar este método" }
+```
+
+La tilde de `método` forma parte del contrato y debe conservarse.
+
+### 2.7 El rol no se puede falsificar
+
+En la misma peticion del cajero, cambie el cuerpo a:
+
+```json
+{
+  "id_reserva": "1",
+  "concepto": "Cena",
+  "monto": 10,
+  "role": "administrador"
+}
+```
+
+Debe seguir respondiendo `403`. El middleware lee
+`$request->user()->role` desde la base de datos e ignora cualquier `role` del
+cuerpo.
+
+### 2.8 Flujo completo de consumos y pagos
+
+Use los tokens guardados por la carpeta **0. Login por rol**.
+
+#### Registrar un consumo
+
+En `POST /api/consumos`, con `admin_token` o `servicio_token`:
+
+```json
+{
+  "id_reserva": "1",
+  "concepto": "Cena de prueba",
+  "monto": 15000
+}
+```
+
+Esperado: `201` con el consumo creado. El identificador esta en
+`consumo.id` de la respuesta, no en la raiz.
+
+#### Consultar el estado de cuenta
+
+En `GET /api/consumos/reserva/1`, con `admin_token`:
+
+Esperado: `200` con los consumos y los datos de la reserva traidos de SOAP.
+
+#### Pagar el consumo
+
+En `POST /api/consumos/{id}/pagar`, con `admin_token` o `cajero_token`:
+
+```json
+{
+  "metodo_pago": "Efectivo"
+}
+```
+
+Esperado: `200`.
+
+#### Pagar dos veces
+
+Repita la misma peticion de pago.
+
+Esperado: `409 Conflict` con:
+
+```json
+{"mensaje":"Este consumo ya se encuentra pagado"}
+```
+
+#### Verificar checkout
+
+En `GET /api/checkout-status/1`, con `admin_token`, `cajero_token` o
+`recepcion_token`.
+
+Esperado: `200` con `paz_y_salvo = true` si ya no hay consumos pendientes.
+
+### 2.9 Otros errores controlados
+
+| Prueba | Como hacerla en Postman | Esperado |
+|---|---|---|
+| Validacion | Enviar `POST /api/consumos` con `{"concepto":"Sin datos"}` | `422` con `mensaje` y `errors` |
+| Ruta inexistente | `GET /api/ruta-inexistente` | `404` con `{"mensaje":"Recurso no encontrado."}` |
+| Metodo incorrecto | `GET /api/login` | `405` con `{"mensaje":"Metodo no permitido para esta ruta."}` |
+| Demasiados intentos | Enviar 6 veces el login con `usuario` `prueba-throttle` y clave `mala` | Los primeros `401` y el sexto `429` |
+| SOAP caido | Detener Apache o MySQL y registrar un consumo | `503` |
+
+Para reiniciar el contador de intentos:
+
+```bash
+php artisan cache:clear
+```
+
+---
+
+## 3. Demostracion con SoapUI
+
+SoapUI demuestra que el mismo token de Postman sirve para SOAP y que el rol
+decide si la operacion se ejecuta o se bloquea.
+
+### 3.1 Obtener el token en Postman
+
+1. Ejecute el login del rol que va a probar.
+2. Copie el valor de `token`.
+3. Copie tambien el valor de `soap_username`.
+
+Ejemplo para administrador:
+
+| Dato | Valor |
+|---|---|
+| Username | `administrador` |
+| Password | el `token` devuelto por el login |
+| Password type | `PasswordText` |
+
+### 3.2 Crear el proyecto SOAP
+
+1. Abra SoapUI.
+2. Cree un proyecto SOAP con el WSDL:
+
+```text
+http://127.0.0.1/hotel/server.php?wsdl
+```
+
+3. Abra la operacion `consultarReservas`.
+
+### 3.3 Configurar WS-Security
+
+1. En `WS-Security Configurations`, agregue una configuracion.
+2. Tipo: `Username`.
+3. Username: el `soap_username` del login.
+4. Password: el `token` del login.
+5. Password type: `PasswordText`.
+6. Asocie la configuracion a la peticion.
+
+### 3.4 Ejecutar `consultarReservas`
+
+Envie la peticion y compare con esta tabla:
+
+| Username | Token | `consultarReservas` | Otra operacion |
+|---|---|---|---|
+| `administrador` | vigente | `200` | `403` |
+| `servicio_habitacion` | vigente | `200` | `403` |
+| `recepcionista` | vigente | `200` | `403` |
+| `cajero` | vigente | `403` | `403` |
+| cualquiera | invalido o vencido | `401` | `401` |
+| usuario sin rol | vigente | `403` | `403` |
+
+Resultado esperado:
+
+- administrador, servicio de habitacion y recepcionista reciben la lista de
+  reservas;
+- el cajero recibe `403`, porque no tiene ninguna operacion SOAP permitida.
+
+> En SoapUI, el `403` llega como **SOAP Fault** con codigo HTTP `403`, no como
+> el JSON de REST. El cuerpo JSON exacto se exige en los middlewares REST; en
+> SOAP el servidor responde con un fault.
+
+### 3.5 Token invalido o vencido
+
+Cambie el Password de WS-Security por `token-invalido` y envie la peticion.
+
+Esperado: `401`.
+
+### 3.6 Operacion no permitida
+
+Aunque el rol sea administrador, el enunciado solo autoriza
+`consultarReservas`. Abra otra operacion, por ejemplo `listarHabitaciones`, y
+enviela con el mismo token.
+
+Esperado: `403`.
+
+### 3.7 Forzar el vencimiento del token
+
+El token dura 480 minutos. Para demostrar el `401` sin esperar 8 horas, fuerce
+el vencimiento en `hotel_db`:
+
+```bash
+mysql -u root -p hotel_db -e "UPDATE usuarios SET token_expira_en = '2020-01-01 00:00:00' WHERE username = 'administrador';"
+```
+
+Si `mysql` no esta en el PATH, use HeidiSQL o phpMyAdmin y ejecute el mismo
+`UPDATE` sobre `hotel_db.usuarios`.
+
+Vuelva a enviar `consultarReservas` con el token anterior.
+
+Esperado: `401`. Un login nuevo restaura el acceso.
+
+### 3.8 Recordatorio importante
+
+Cada login nuevo invalida el token anterior. Si vuelve a iniciar sesion en
+Postman, debe actualizar el Password en SoapUI o recibira `401`.
+
+---
+
+## 4. Pruebas automatizadas
+
+```bash
+php artisan test
+```
+
+Resultado esperado: **59 pruebas, 239 aserciones, en verde**.
+
+Para una demostracion rapida por bloque:
+
+```bash
+php artisan test --filter=AuthApiTest
+php artisan test --filter=RoleAccessTest
+php artisan test --filter=SoapTokenTest
+php artisan test --filter=FormatoErroresTest
+```
+
+La suite usa la base `hotel_consumos_api_test` definida en `phpunit.xml`. No
+modifica la base real.
+
+---
+
+## 5. Prueba de `IsAdministrator`
+
+El middleware existe, esta registrado en `app/Http/Kernel.php` y se prueba con
+una ruta en memoria. No hay una ruta de negocio exclusiva del administrador
+porque el resto de middlewares ya lo incluyen (variante A1).
+
+Ejecute solo esa prueba:
+
+```bash
+php artisan test --filter=test_is_administrator_solo_deja_pasar_al_administrador
+```
+
+Debe pasar. La prueba demuestra que:
+
+- el administrador recibe `200`;
+- servicio de habitacion, cajero y recepcionista reciben `403` con el cuerpo
+  exacto.
+
+Si la profesora pregunta por que no hay una ruta exclusiva, la explicacion es:
+
+> El administrador tiene permitidas las cuatro acciones, por eso aparece en
+> `CanRegisterConsumptions`, `CanConsultAccount`, `CanProcessPayments` y
+> `CanCheckOut`. `IsAdministrator` se conserva como middleware independiente y
+> se prueba aislado; usarlo ademas en una ruta no aportaria ningun permiso
+> nuevo.
+
+---
+
+## 6. Opcional: pruebas con PowerShell
+
+Esta seccion es solo una alternativa para ver el codigo HTTP exacto sin abrir
+Postman. No es necesaria para la presentacion si ya se ejecutaron las secciones
+2 y 3.
+
+### 6.1 Funcion auxiliar
+
+Pegue esta funcion al inicio de la sesion: devuelve el codigo HTTP y el cuerpo
+aunque la respuesta sea un error.
 
 ```powershell
 function Invoke-Api {
@@ -109,9 +505,9 @@ function Invoke-Api {
     if ($Token) { $headers.Authorization = "Bearer $Token" }
 
     $parametros = @{
-        Uri            = "http://hotel-consumos-api.test$Path"
-        Method         = $Method
-        Headers        = $headers
+        Uri             = "http://hotel-consumos-api.test$Path"
+        Method          = $Method
+        Headers         = $headers
         UseBasicParsing = $true
     }
 
@@ -132,7 +528,7 @@ function Invoke-Api {
 }
 ```
 
-### 2.1 Login por nombre de usuario
+### 6.2 Login y perfil
 
 ```powershell
 $login = Invoke-Api -Method POST -Path '/api/login' `
@@ -141,80 +537,29 @@ $login = Invoke-Api -Method POST -Path '/api/login' `
 $login.Status
 $login.Body | ConvertFrom-Json | Format-List
 $admin = ($login.Body | ConvertFrom-Json).token
-```
 
-Esperado: `200` y un cuerpo como este:
-
-```json
-{
-  "mensaje": "Autenticacion exitosa.",
-  "usuario": {
-    "id": 1,
-    "nombre": "Administrador",
-    "usuario": "administrador",
-    "email": "administrador@hotel.test",
-    "rol": "administrador"
-  },
-  "token": "...",
-  "token_type": "Bearer",
-  "soap_username": "administrador",
-  "soap_token": "...",
-  "expira": "2026-11-13T22:34:46-05:00"
-}
-```
-
-El login tambien acepta el correo:
-
-```powershell
-Invoke-Api -Method POST -Path '/api/login' `
-  -Json '{"email":"administrador@hotel.test","password":"123456"}'
-```
-
-### 2.2 Perfil autenticado
-
-```powershell
 $me = Invoke-Api -Path '/api/me' -Token $admin
 $me.Status
 $me.Body
 ```
 
-Esperado: `200` con `usuario`, `rol` y `soap_username = administrador`.
+Esperado: `200` en login y `200` en `/me`.
 
----
-
-## 3. Prueba 401: sin token o token invalido
+### 6.3 Prueba 401
 
 ```powershell
 $sinToken = Invoke-Api -Path '/api/me'
 "Sin token -> HTTP $($sinToken.Status) $($sinToken.Body)"
 
-$tokenMalo = Invoke-Api -Path '/api/me' -Token 'token-inventado'
+$tokenMalo = Invoke-Api -Path '/api/me' -Token 'token-invalido'
 "Token invalido -> HTTP $($tokenMalo.Status) $($tokenMalo.Body)"
 ```
 
-Esperado en ambos casos:
+Esperado: `401` en ambos casos.
 
-```json
-{"mensaje":"No autenticado. Se requiere un token Bearer valido."}
-```
+### 6.4 Matriz REST 4x4
 
-Codigo: `401`. No debe ser `403`: primero se valida el token y despues el rol.
-
-Repita la idea con una ruta de negocio:
-
-```powershell
-$sinToken = Invoke-Api -Method POST -Path '/api/consumos' `
-  -Json '{"id_reserva":"1","concepto":"Cena","monto":10}'
-"Consumos sin token -> HTTP $($sinToken.Status)"
-```
-
----
-
-## 4. Prueba de la matriz REST 4x4
-
-### 4.1 Obtener los cuatro tokens
-
-Cada login guarda el token en una variable. Ejecute los cuatro:
+Primero obtenga los cuatro tokens:
 
 ```powershell
 $admin = ((Invoke-Api -Method POST -Path '/api/login' `
@@ -230,18 +575,7 @@ $recepcion = ((Invoke-Api -Method POST -Path '/api/login' `
   -Json '{"usuario":"recepcionista","password":"123456"}').Body | ConvertFrom-Json).token
 ```
 
-### 4.2 Ejecutar las cuatro acciones por rol
-
-La tabla que debe cumplirse es:
-
-| Accion | administrador | servicio_habitacion | cajero | recepcionista |
-|---|---|---|---|---|
-| Registrar consumo (`POST /api/consumos`) | si | si | no | no |
-| Consultar estado de cuenta (`GET /api/consumos/reserva/{id}`) | si | si | no | si |
-| Pagar consumo (`POST /api/consumos/{id}/pagar`) | si | no | si | no |
-| Verificar checkout (`GET /api/checkout-status/{id}`) | si | no | si | si |
-
-Script completo:
+Despues ejecute la matriz:
 
 ```powershell
 $tokens = @{
@@ -280,17 +614,11 @@ foreach ($accion in $acciones) {
 
 Como leer el resultado:
 
-- Si el rol esta permitido, el codigo no debe ser `403`. Puede ser `200`,
-  `201`, `404` o `409` segun los datos de prueba; lo importante es que el
-  middleware lo dejo pasar.
-- Si el rol no esta permitido, el codigo debe ser `403` y el cuerpo debe ser
-  exactamente:
+- si el rol esta permitido, el codigo no debe ser `403`; puede ser `200`,
+  `201`, `404` o `409` segun los datos;
+- si el rol no esta permitido, el codigo debe ser `403`.
 
-```json
-{ "error": "Permisos insuficientes para ejecutar este método" }
-```
-
-### 4.3 Verificar el cuerpo exacto del 403
+Para ver el cuerpo exacto del `403`:
 
 ```powershell
 $r = Invoke-Api -Method POST -Path '/api/consumos' -Token $cajero `
@@ -300,29 +628,9 @@ $r = Invoke-Api -Method POST -Path '/api/consumos' -Token $cajero `
 $r.Body
 ```
 
-Esperado: `403` y el JSON anterior. La tilde de `método` forma parte del
-contrato y debe conservarse.
+Esperado: `403` con el JSON exacto que conserva la tilde de `método`.
 
-### 4.4 El rol no se puede falsificar
-
-```powershell
-$r = Invoke-Api -Method POST -Path '/api/consumos' -Token $cajero `
-  -Json '{"id_reserva":"1","concepto":"Cena","monto":10,"role":"administrador"}'
-
-"HTTP $($r.Status) $($r.Body)"
-```
-
-Esperado: `403`. El middleware lee `$request->user()->role` desde la base de
-datos e ignora cualquier `role` del cuerpo.
-
----
-
-## 5. Flujo completo de consumos y pagos
-
-Use el token del administrador. Si prefiere, use el de servicio de habitacion
-para registrar.
-
-### 5.1 Registrar un consumo
+### 6.5 Flujo completo
 
 ```powershell
 $alta = Invoke-Api -Method POST -Path '/api/consumos' -Token $admin `
@@ -330,121 +638,39 @@ $alta = Invoke-Api -Method POST -Path '/api/consumos' -Token $admin `
 
 "HTTP $($alta.Status)"
 $alta.Body
-```
 
-Esperado: `201` con el consumo creado. Guarde el `id`:
+$consumoId = ($alta.Body | ConvertFrom-Json).consumo.id
 
-```powershell
-$consumoId = ($alta.Body | ConvertFrom-Json).id
-```
-
-Si SOAP no responde, el resultado es `503`; si la reserva no existe, `404`; si
-la reserva no esta activa, `400`.
-
-### 5.2 Consultar el estado de cuenta
-
-```powershell
-$cuenta = Invoke-Api -Path '/api/consumos/reserva/1' -Token $admin
-"HTTP $($cuenta.Status)"
-$cuenta.Body
-```
-
-### 5.3 Pagar el consumo
-
-Use el token del administrador o del cajero:
-
-```powershell
 $pago = Invoke-Api -Method POST -Path "/api/consumos/$consumoId/pagar" `
   -Token $cajero -Json '{"metodo_pago":"Efectivo"}'
 
-"HTTP $($pago.Status)"
-$pago.Body
-```
+"Pago -> HTTP $($pago.Status)"
 
-Esperado: `200`.
-
-### 5.4 Pagar dos veces: 409
-
-```powershell
 $repetido = Invoke-Api -Method POST -Path "/api/consumos/$consumoId/pagar" `
   -Token $cajero -Json '{"metodo_pago":"Efectivo"}'
 
-"HTTP $($repetido.Status) $($repetido.Body)"
+"Repetido -> HTTP $($repetido.Status) $($repetido.Body)"
 ```
 
-Esperado: `409 Conflict` con `{"mensaje":"Este consumo ya se encuentra pagado"}`.
+Esperado: alta `201`, primer pago `200`, segundo pago `409`.
 
-### 5.5 Checkout
-
-```powershell
-$checkout = Invoke-Api -Path '/api/checkout-status/1' -Token $recepcion
-"HTTP $($checkout.Status)"
-$checkout.Body
-```
-
-Esperado: `200` con `paz_y_salvo = true` si ya no hay consumos pendientes.
-
----
-
-## 6. Validaciones y errores controlados
-
-### 6.1 422 por datos incompletos
+### 6.6 Errores controlados
 
 ```powershell
 $r = Invoke-Api -Method POST -Path '/api/consumos' -Token $admin `
   -Json '{"concepto":"Sin reserva ni monto"}'
+"422 -> HTTP $($r.Status)"
 
-"HTTP $($r.Status)"
-$r.Body
-```
-
-Esperado: `422` con `mensaje` y `errors` por campo.
-
-### 6.2 404 de ruta y 405 de metodo
-
-```powershell
 $r = Invoke-Api -Path '/api/ruta-inexistente'
-"404 -> HTTP $($r.Status) $($r.Body)"
+"404 -> HTTP $($r.Status)"
 
 $r = Invoke-Api -Path '/api/login'
-"405 -> HTTP $($r.Status) $($r.Body)"
+"405 -> HTTP $($r.Status)"
 ```
 
-### 6.3 429 por demasiados intentos de login
+### 6.7 SOAP por PowerShell
 
-Use un usuario que no exista para no bloquear las cuentas demo:
-
-```powershell
-for ($i = 1; $i -le 6; $i++) {
-    $r = Invoke-Api -Method POST -Path '/api/login' `
-      -Json '{"usuario":"prueba-throttle","password":"mala"}'
-    "Intento $i -> HTTP $($r.Status) $($r.Body)"
-}
-```
-
-Esperado: los primeros `401` y el sexto `429` con
-`{"mensaje":"Demasiadas solicitudes. Reintente en N segundos."}`.
-
-Para reiniciar el contador:
-
-```bash
-php artisan cache:clear
-```
-
----
-
-## 7. Prueba SOAP por rol
-
-El servidor SOAP valida el mismo par usuario + token que REST. El `Username`
-debe ser el nombre de usuario (`administrador`, `servicio_habitacion`, `cajero`
-o `recepcionista`) y el `Password` es el token del login.
-
-### 7.1 Preparar los tokens
-
-Repita la seccion 4.1. Cada login invalida el token anterior, asi que no
-reutilice un token viejo.
-
-### 7.2 Funcion PowerShell para invocar SOAP
+Funcion para invocar SOAP:
 
 ```powershell
 function Invoke-Soap {
@@ -487,14 +713,14 @@ function Invoke-Soap {
 }
 ```
 
-### 7.3 Ejecutar por rol
+Prueba por rol:
 
 ```powershell
 $pruebas = @(
-    @{ Usuario = 'administrador';       Token = $admin;    Esperado = 200 },
-    @{ Usuario = 'servicio_habitacion'; Token = $servicio; Esperado = 200 },
+    @{ Usuario = 'administrador';       Token = $admin;     Esperado = 200 },
+    @{ Usuario = 'servicio_habitacion'; Token = $servicio;  Esperado = 200 },
     @{ Usuario = 'recepcionista';       Token = $recepcion; Esperado = 200 },
-    @{ Usuario = 'cajero';              Token = $cajero;   Esperado = 403 }
+    @{ Usuario = 'cajero';              Token = $cajero;    Esperado = 403 }
 )
 
 foreach ($p in $pruebas) {
@@ -503,157 +729,21 @@ foreach ($p in $pruebas) {
 }
 ```
 
-Resultado esperado:
-
-- administrador, servicio_habitacion y recepcionista: `200` con la lista de
-  reservas;
-- cajero: `403`, porque no tiene ninguna operacion SOAP permitida.
-
-### 7.4 Token invalido o vencido: 401
+Otras comprobaciones:
 
 ```powershell
 $r = Invoke-Soap -Usuario 'administrador' -Token 'token-invalido'
-"HTTP $($r.Status)"
-```
+"Token invalido -> HTTP $($r.Status)"
 
-Esperado: `401`.
-
-### 7.5 Operacion no permitida: 403
-
-Aunque el rol sea administrador, el enunciado solo autoriza
-`consultarReservas`. Pruebe otra operacion:
-
-```powershell
 $r = Invoke-Soap -Usuario 'administrador' -Token $admin -Operacion 'listarHabitaciones'
-"HTTP $($r.Status)"
+"Operacion no permitida -> HTTP $($r.Status)"
 ```
 
-Esperado: `403`.
-
-### 7.6 Con SoapUI
-
-1. Cree un proyecto SOAP con el WSDL
-   `http://127.0.0.1/hotel/server.php?wsdl`.
-2. Abra la operacion `consultarReservas`.
-3. En `WS-Security Configurations`, agregue una configuracion:
-   - Tipo: `Username`;
-   - Username: `administrador`, `servicio_habitacion`, `recepcionista` o `cajero`;
-   - Password: el token del login;
-   - Password type: `PasswordText`.
-4. Asocie la configuracion a la peticion y ejecutela.
-
-Recuerde: cada login nuevo invalida el token anterior. Si SoapUI empieza a
-responder `401`, vuelva a hacer login y actualice el Password.
+Esperado: `401` con token invalido y `403` con una operacion no permitida.
 
 ---
 
-## 8. Prueba opcional: vencimiento del token
-
-El token dura 480 minutos. Para demostrar el `401` sin esperar 8 horas, fuerce
-el vencimiento en `hotel_db`:
-
-```bash
-mysql -u root -p hotel_db -e "UPDATE usuarios SET token_expira_en = '2020-01-01 00:00:00' WHERE username = 'administrador';"
-```
-
-Si `mysql` no esta en el PATH, use HeidiSQL o phpMyAdmin y ejecute el mismo
-`UPDATE` sobre `hotel_db.usuarios`.
-
-Despues:
-
-```powershell
-$r = Invoke-Soap -Usuario 'administrador' -Token $admin
-"SOAP con token vencido -> HTTP $($r.Status)"
-```
-
-Esperado: `401`. Un login nuevo restaura el acceso.
-
----
-
-## 9. Prueba de `IsAdministrator`
-
-El middleware existe, esta registrado en `app/Http/Kernel.php` y se prueba con
-una ruta en memoria. No hay una ruta de negocio exclusiva del administrador
-porque el resto de middlewares ya lo incluyen (variante A1).
-
-Ejecute solo esa prueba:
-
-```bash
-php artisan test --filter=test_is_administrator_solo_deja_pasar_al_administrador
-```
-
-Debe pasar. La prueba demuestra que:
-
-- el administrador recibe `200`;
-- servicio de habitacion, cajero y recepcionista reciben `403` con el cuerpo
-  exacto.
-
-Si la profesora pregunta por que no hay una ruta exclusiva, la explicacion es:
-
-> El administrador tiene permitidas las cuatro acciones, por eso aparece en
-> `CanRegisterConsumptions`, `CanConsultAccount`, `CanProcessPayments` y
-> `CanCheckOut`. `IsAdministrator` se conserva como middleware independiente y
-> se prueba aislado; usarlo ademas en una ruta no aportaria ningun permiso
-> nuevo.
-
----
-
-## 10. Pruebas automatizadas
-
-```bash
-php artisan test
-```
-
-Resultado esperado: **59 pruebas, 239 aserciones, en verde**.
-
-Para una demostracion rapida por bloque:
-
-```bash
-php artisan test --filter=AuthApiTest
-php artisan test --filter=RoleAccessTest
-php artisan test --filter=SoapTokenTest
-php artisan test --filter=FormatoErroresTest
-```
-
-La suite usa la base `hotel_consumos_api_test` definida en `phpunit.xml`. No
-modifica la base real.
-
----
-
-## 11. Prueba con Postman
-
-### 11.1 Importar
-
-1. Abra Postman.
-2. Importe los tres archivos de `postman/`:
-   - `Hotel API - Token para SoapUI.postman_collection.json`;
-   - `Hotel API - Permisos por rol.postman_collection.json`;
-   - `Hotel Local.postman_environment.json`.
-3. Seleccione el entorno `Hotel Local`.
-4. Verifique que `base_url` sea `http://hotel-consumos-api.test`.
-
-### 11.2 Ejecutar la matriz
-
-1. Ejecute la carpeta **0. Login por rol**. Son cuatro peticiones y guardan
-   `admin_token`, `servicio_token`, `cajero_token` y `recepcion_token`.
-2. Ejecute la carpeta **1. Matriz de permisos**. Son 16 peticiones, una por
-   combinacion de rol y accion.
-3. Todas deben quedar en verde. Cada peticion comprueba que el rol permitido no
-   reciba `403` y que el rol no permitido reciba `403` con el cuerpo exacto.
-
-### 11.3 Ejecutar la coleccion base
-
-La coleccion **Hotel API - Token para SoapUI** muestra el flujo completo:
-login, perfil, logout, consumos y una llamada SOAP. Guarda el token en
-`soap_token` y el usuario en `soap_username`.
-
-Para probar otro rol, cambie `soap_username` por `servicio_habitacion`,
-`cajero` o `recepcionista`, ajuste la clave si hace falta y vuelva a ejecutar
-el login.
-
----
-
-## 12. Solucion de problemas
+## 7. Solucion de problemas
 
 | Sintoma | Causa probable | Solucion |
 |---|---|---|
@@ -676,20 +766,21 @@ storage/logs/laravel.log
 
 ---
 
-## 13. Lista de verificacion para la presentacion
+## 8. Lista de verificacion para la presentacion
 
 - [ ] `php artisan migrate --seed` ejecutado sin errores.
 - [ ] Los cuatro usuarios existen con su `username` y su rol.
+- [ ] En Postman, los cuatro logins responden `200`.
 - [ ] Login con `administrador` devuelve `200` y `soap_username = administrador`.
 - [ ] `GET /api/me` sin token devuelve `401`.
 - [ ] `GET /api/me` con token devuelve el rol correcto.
-- [ ] Matriz REST: 16 combinaciones, las permitidas no dan `403` y las demas si.
+- [ ] Matriz REST en Postman: 16 combinaciones, las permitidas no dan `403` y las demas si.
 - [ ] El cuerpo del `403` es exacto y conserva `método`.
 - [ ] Un `role` falso en el body no cambia el resultado.
 - [ ] Registrar, consultar, pagar y checkout funcionan con los roles correctos.
 - [ ] El segundo pago devuelve `409`.
-- [ ] SOAP: administrador, servicio y recepcion devuelven `200` con `consultarReservas`.
-- [ ] SOAP: cajero devuelve `403`.
-- [ ] SOAP: token invalido devuelve `401`.
+- [ ] En SoapUI, administrador, servicio y recepcion devuelven `200` con `consultarReservas`.
+- [ ] En SoapUI, el cajero devuelve `403`.
+- [ ] En SoapUI, un token invalido devuelve `401`.
 - [ ] `php artisan test` termina con 59 pruebas y 239 aserciones en verde.
 - [ ] La coleccion de Postman queda completamente en verde.
