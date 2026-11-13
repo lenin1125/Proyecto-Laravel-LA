@@ -292,6 +292,8 @@ Relación: `Consumo 1 ── N PagoConsumo` (`consumo_id`).
 | `usuarios` | `id`, `username` (varchar 50, único), `password`, `api_token` (varchar 80, único, nullable), `role` (varchar 30, nullable), `token_expira_en` (datetime UTC, nullable), `created_at` |
 
 > `hotel_db.sql` ya crea `usuarios` con `role` y `token_expira_en`, así que un entorno nuevo puede autenticarse y autorizar sin pasos manuales. En una base existente hay que agregar las columnas con `ALTER TABLE usuarios ADD COLUMN role VARCHAR(30) NULL AFTER api_token;` y `ALTER TABLE usuarios ADD COLUMN token_expira_en DATETIME NULL AFTER role;` si todavía no están.
+>
+> Los tokens emitidos antes de agregar `token_expira_en` quedaron sin fecha y el servidor SOAP los acepta por compatibilidad. Para cerrar esa ventana de una vez, ejecute `UPDATE usuarios SET token_expira_en = '1970-01-01 00:00:00' WHERE token_expira_en IS NULL AND api_token IS NOT NULL;` y pida un login nuevo a cada usuario.
 
 ---
 
