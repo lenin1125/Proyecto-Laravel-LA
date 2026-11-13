@@ -86,7 +86,7 @@ El detalle esta en `postman/README.md` y la guia paso a paso en `GUIA-DE-PRUEBAS
 
 ## Seguridad
 
-- `POST /api/login` admite 5 intentos por minuto por correo e IP. Al superarlo responde
+- `POST /api/login` admite 5 intentos por minuto por usuario/correo e IP. Al superarlo responde
   `429` con `Retry-After` y `{"mensaje":"Demasiadas solicitudes. Reintente en N segundos."}`.
   Se ajusta con `LOGIN_MAX_ATTEMPTS` y `LOGIN_DECAY_MINUTES`.
 - El token vence a los 480 minutos (8 horas). `/api/login` y `/api/me` devuelven `expira`

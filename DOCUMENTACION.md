@@ -30,7 +30,7 @@ API REST en **Laravel 10 / PHP 8.1** para registrar y cobrar consumos extras de 
 - Git inicializado en los dos proyectos; etiqueta base `linea-base` y commits por bloque.
 - 59 pruebas automatizadas en verde (239 aserciones).
 - Zona horaria `America/Bogota` (UTC-5), igual que el sistema y MySQL.
-- Login limitado a 5 intentos por minuto por correo e IP; token con vigencia de 8 horas, aplicada también en SOAP.
+- Login limitado a 5 intentos por minuto por usuario/correo e IP; token con vigencia de 8 horas, aplicada también en SOAP.
 
 ---
 
@@ -309,7 +309,7 @@ Relación: `Consumo 1 ── N PagoConsumo` (`consumo_id`).
 | `SOAP_TIMEOUT` | Timeout de llamadas SOAP |
 | `SOAP_DB_DATABASE` | Nombre de la BD del servidor SOAP (`hotel_db`) |
 | `SANCTUM_EXPIRATION` | Minutos de vigencia del token Bearer (480 por defecto) |
-| `LOGIN_MAX_ATTEMPTS` | Intentos de login por correo e IP dentro de la ventana (5 por defecto) |
+| `LOGIN_MAX_ATTEMPTS` | Intentos de login por usuario/correo e IP dentro de la ventana (5 por defecto) |
 | `LOGIN_DECAY_MINUTES` | Minutos de la ventana del throttle de login (1 por defecto) |
 | `APP_KEY`, `APP_ENV`, `APP_DEBUG`, `APP_URL`, `LOG_*` | Framework |
 
@@ -459,7 +459,7 @@ Dentro de `config/services.php`, las secciones `mailgun`, `postmark` y `ses` no 
 
 **13/11/2026**
 
-16. **Throttle específico de login:** 5 intentos por minuto por correo e IP. Al superarlo responde `429` con `mensaje` y `Retry-After`. Se configura con `LOGIN_MAX_ATTEMPTS` y `LOGIN_DECAY_MINUTES`.
+16. **Throttle específico de login:** 5 intentos por minuto por usuario/correo e IP. Al superarlo responde `429` con `mensaje` y `Retry-After`. Se configura con `LOGIN_MAX_ATTEMPTS` y `LOGIN_DECAY_MINUTES`.
 17. **Tokens con vencimiento:** 480 minutos (8 horas) mediante `SANCTUM_EXPIRATION`. El login devuelve `expira` y cada token guarda `expires_at`. El servidor SOAP aplica la misma vigencia con `token_expira_en` en `hotel_db.usuarios`; un token vencido recibe `401` tanto en REST como en SOAP.
 18. **Formato de error homogenizado:** todas las respuestas usan `mensaje` (`401`, `404`, `405`, `409`, `422`, `429`, `503`). El `403` conserva `error` por contrato y el `422` conserva `errors` para el detalle por campo.
 19. **Login por nombre de usuario:** se agregó `users.username` (único, nullable) y el login acepta `usuario` o `email`. Los cuatro demos usan `administrador`, `servicio_habitacion`, `cajero` y `recepcionista`, tal como los nombra el enunciado.

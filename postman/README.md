@@ -48,7 +48,7 @@ propia contrasena.
 - Sin token: `401` con `{"mensaje":"No autenticado. Se requiere un token Bearer valido."}`.
 - Token valido sin permiso: `403` con `{"error":"Permisos insuficientes para ejecutar este método"}`.
 - El rol se lee de la base de datos, nunca del cuerpo de la peticion.
-- El login admite 5 intentos por minuto por correo e IP; despues responde `429`
+- El login admite 5 intentos por minuto por usuario/correo e IP; despues responde `429`
   con `{"mensaje":"Demasiadas solicitudes. Reintente en N segundos."}`.
 - El token dura 8 horas. Si se vence, REST y SOAP responden `401` y hay que
   ejecutar el login otra vez.

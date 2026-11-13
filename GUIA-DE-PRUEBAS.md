@@ -50,8 +50,23 @@ actualiza los cuatro usuarios de demostracion.
 
 ### 1.3 Verificar los usuarios
 
+Abra Tinker:
+
 ```bash
-php artisan tinker --execute="App\Models\User::query()->get(['username','email','role'])->each(fn(\$u) => print(\$u->username.' | '.\$u->email.' | '.\$u->role.PHP_EOL));"
+php artisan tinker
+```
+
+Pegue esta linea en el prompt `>>>` y pulse Enter:
+
+```php
+App\Models\User::all(['username', 'email', 'role']);
+```
+
+Para salir escriba `exit`. Tambien puede revisar la tabla con HeidiSQL o
+phpMyAdmin:
+
+```sql
+SELECT username, email, role FROM hotel_consumos_api.users;
 ```
 
 Debe ver:
@@ -540,6 +555,9 @@ el vencimiento en `hotel_db`:
 ```bash
 mysql -u root -p hotel_db -e "UPDATE usuarios SET token_expira_en = '2020-01-01 00:00:00' WHERE username = 'administrador';"
 ```
+
+Si `mysql` no esta en el PATH, use HeidiSQL o phpMyAdmin y ejecute el mismo
+`UPDATE` sobre `hotel_db.usuarios`.
 
 Despues:
 
