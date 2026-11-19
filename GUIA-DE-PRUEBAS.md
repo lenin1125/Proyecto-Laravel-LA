@@ -12,12 +12,20 @@ enunciado final de la profesora:
   y recepcionista, y bloqueado para el cajero;
 - pagos, checkout, validaciones y errores controlados.
 
-El orden recomendado para la presentacion es:
+**No hay que importar nada en Postman.** Cada prueba se escribe a mano en una
+peticion nueva. Para cada una la guia indica:
 
-1. **Postman** para login, `/me`, matriz REST y flujo de consumos.
-2. **SoapUI** para probar el token y el rol directamente contra SOAP.
-3. **PowerShell** solo si se quiere mostrar el codigo HTTP exacto sin interfaz.
-4. **PHPUnit** como evidencia de regresion.
+1. el metodo (`GET` o `POST`);
+2. la URL exacta que se pega en Postman;
+3. el cuerpo (`Body`) cuando lleva;
+4. el codigo y el cuerpo que debe devolver.
+
+Orden recomendado para la presentacion:
+
+1. **Postman**: login de los cuatro roles, `/me`, matriz de permisos y flujo de consumos.
+2. **SoapUI**: el token del login se usa contra SOAP y el rol decide si ejecuta.
+3. **PHPUnit**: evidencia de regresion (59 pruebas).
+4. **PowerShell**: opcional, solo si se quiere ver el codigo HTTP sin interfaz.
 
 No se necesita instalar nada nuevo si Laragon ya publica los dos proyectos.
 
@@ -25,19 +33,34 @@ No se necesita instalar nada nuevo si Laragon ya publica los dos proyectos.
 
 ## 1. Preparacion del entorno
 
-### 1.1 Arrancar los servicios
+### 1.1 Levantar el servidor
 
-1. Abra Laragon y pulse **Start All** (Apache y MySQL).
-2. Compruebe que responden estas dos direcciones:
+1. Abra Laragon y pulse **Start All** (arranca Apache y MySQL).
+2. Abra el navegador en:
+
+```text
+http://hotel-consumos-api.test
+```
+
+Si aparece la pantalla de bienvenida de Laravel, la API esta arriba.
+
+3. Compruebe el servidor SOAP abriendo:
+
+```text
+http://127.0.0.1/hotel/server.php?wsdl
+```
+
+Debe mostrarse un XML con definiciones (`definitions`, `service`, `port`).
+Si el navegador intenta descargar el archivo, igual esta bien: el WSDL responde.
 
 | Servicio | URL |
 |---|---|
-| API Laravel | `http://hotel-consumos-api.test` |
+| API Laravel (REST) | `http://hotel-consumos-api.test` |
 | WSDL SOAP | `http://127.0.0.1/hotel/server.php?wsdl` |
 
-Si la primera no responde, revise que la carpeta
-`C:\laragon\www\hotel-consumos-api` este publicada por Laragon.
-Si la segunda no responde, revise que Apache publique `C:\laragon\www\hotel`.
+Si la primera no responde, revise que Laragon publique
+`C:\laragon\www\hotel-consumos-api`. Si la segunda no responde, revise que
+Apache publique `C:\laragon\www\hotel`.
 
 ### 1.2 Preparar la base de datos
 
@@ -49,8 +72,8 @@ php artisan cache:clear
 php artisan config:clear
 ```
 
-`migrate` aplica la migracion nueva de `users.username`. `--seed` crea o
-actualiza los cuatro usuarios de demostracion.
+`migrate` aplica la migracion de `users.username`. `--seed` crea o actualiza los
+cuatro usuarios de demostracion.
 
 > Si ya tenia datos y no quiere volver a sembrar todo, ejecute
 > `php artisan db:seed --class=UsuarioRolSeeder`.
@@ -66,24 +89,24 @@ php artisan tinker
 Pegue esta linea en el prompt `>>>` y pulse Enter:
 
 ```php
-App\Models\User::all(['username', 'email', 'role']);
+App\Models\User::all(['id', 'username', 'email', 'role']);
 ```
 
 Para salir escriba `exit`. Tambien puede revisar la tabla con HeidiSQL o
 phpMyAdmin:
 
 ```sql
-SELECT username, email, role FROM hotel_consumos_api.users;
+SELECT id, username, email, role FROM hotel_consumos_api.users;
 ```
 
-Debe ver:
+Debe ver estos cuatro usuarios (los `id` pueden variar):
 
-| Rol | Usuario | Correo | Contrasena |
-|---|---|---|---|
-| administrador | `administrador` | `administrador@hotel.test` | `123456` |
-| servicio_habitacion | `servicio_habitacion` | `servicio@hotel.test` | `123456` |
-| cajero | `cajero` | `cajero@hotel.test` | `123456` |
-| recepcionista | `recepcionista` | `recepcionista@hotel.test` | `123456` |
+| id | Rol | Usuario para el login | Correo | Contrasena |
+|---|---|---|---|---|
+| 3 | administrador | `administrador` | `administrador@hotel.test` | `123456` |
+| 4 | servicio_habitacion | `servicio_habitacion` | `servicio@hotel.test` | `123456` |
+| 5 | cajero | `cajero` | `cajero@hotel.test` | `123456` |
+| 6 | recepcionista | `recepcionista` | `recepcionista@hotel.test` | `123456` |
 
 Los cuatro comparten `123456` porque son cuentas de demostracion.
 
@@ -98,28 +121,72 @@ Debe ver `login`, `me`, `logout`, `registrarConsumo`, `consultarEstadoCuenta`,
 
 ---
 
-## 2. Demostracion con Postman
+## 2. Postman paso a paso
 
-Esta es la parte principal de la presentacion. Postman demuestra el login, el
-token, el rol y la matriz REST.
+### 2.1 Conocer la pantalla de Postman
 
-### 2.1 Importar los archivos
+Solo se usan cinco partes de la ventana:
 
-1. Abra Postman.
-2. Importe los tres archivos de `postman/`:
-   - `Hotel API - Token para SoapUI.postman_collection.json`;
-   - `Hotel API - Permisos por rol.postman_collection.json`;
-   - `Hotel Local.postman_environment.json`.
-3. Seleccione el entorno `Hotel Local`.
-4. Verifique que `base_url` sea `http://hotel-consumos-api.test`.
+| Parte | Para que sirve |
+|---|---|
+| Boton **New** o el `+` de una pestana | Crear una peticion nueva |
+| Selector de metodo (a la izquierda de la URL) | Elegir `GET` o `POST` |
+| Campo de URL | Pegar la direccion completa |
+| Boton **Send** | Enviar la peticion |
+| Pestanas **Body** y **Authorization** | Enviar el JSON y el token |
 
-### 2.2 Login por rol
+Dos aclaraciones utiles:
 
-1. Abra la coleccion **Hotel API - Permisos por rol**.
-2. Abra la carpeta **0. Login por rol**.
-3. Ejecute las cuatro peticiones o use **Run folder**.
+- **GET** solo consulta: no lleva cuerpo.
+- **POST** envia datos: el cuerpo se escribe en `Body`.
 
-Cada peticion envia:
+Para escribir un cuerpo JSON:
+
+1. Pulse la pestana **Body**.
+2. Marque **raw**.
+3. En el desplegable de la derecha elija **JSON**.
+
+Para enviar el token:
+
+1. Pulse la pestana **Authorization**.
+2. En **Type** elija **Bearer Token**.
+3. Pegue el token en el campo **Token**.
+
+La respuesta aparece en la parte inferior: arriba el codigo (`200`, `401`,
+`403`...) y abajo el cuerpo.
+
+### 2.2 Direcciones que se van a usar
+
+Todas parten de la misma base: `http://hotel-consumos-api.test`.
+
+| Para que | Metodo | URL completa | Lleva cuerpo |
+|---|---|---|---|
+| Iniciar sesion y obtener token | `POST` | `http://hotel-consumos-api.test/api/login` | si |
+| Ver el perfil del usuario del token | `GET` | `http://hotel-consumos-api.test/api/me` | no |
+| Registrar un consumo | `POST` | `http://hotel-consumos-api.test/api/consumos` | si |
+| Consultar el estado de cuenta | `GET` | `http://hotel-consumos-api.test/api/consumos/reserva/1` | no |
+| Pagar un consumo | `POST` | `http://hotel-consumos-api.test/api/consumos/{id}/pagar` | si |
+| Verificar checkout | `GET` | `http://hotel-consumos-api.test/api/checkout-status/1` | no |
+| Cerrar sesion | `POST` | `http://hotel-consumos-api.test/api/logout` | no |
+
+En `{id}` va el id de un **consumo**, no el de la reserva. En las rutas de
+consultar y checkout, `1` es el id de la reserva. Mas adelante se explica como
+obtener un id real.
+
+### 2.3 Login: de aqui sale el token para todo
+
+Este es el primer paso obligatorio. Se repite una vez por cada rol.
+
+1. En Postman pulse **New** y elija **HTTP** (o el `+`).
+2. En el selector de metodo elija **POST**.
+3. Pegue la URL:
+
+```text
+http://hotel-consumos-api.test/api/login
+```
+
+4. Pulse **Body** → **raw** → **JSON**.
+5. Pegue este cuerpo:
 
 ```json
 {
@@ -129,39 +196,58 @@ Cada peticion envia:
 }
 ```
 
-Valores de `usuario`:
+6. Pulse **Send**.
 
-| Peticion | Usuario | Token que guarda |
-|---|---|---|
-| Login administrador | `administrador` | `admin_token` |
-| Login servicio_habitacion | `servicio_habitacion` | `servicio_token` |
-| Login cajero | `cajero` | `cajero_token` |
-| Login recepcionista | `recepcionista` | `recepcion_token` |
-
-Cada una debe responder `200`. En el cuerpo verifique:
+Debe responder `200` con algo asi:
 
 ```json
 {
   "mensaje": "Autenticacion exitosa.",
   "usuario": {
-    "id": 1,
+    "id": 3,
     "nombre": "Administrador",
     "usuario": "administrador",
     "email": "administrador@hotel.test",
     "rol": "administrador"
   },
-  "token": "...",
+  "token": "3|wCpvohrn8kFcSl4GdjbIGMBWkettBHenlc4fF37V0cf10d5c",
   "token_type": "Bearer",
   "soap_username": "administrador",
-  "soap_token": "...",
-  "expira": "2026-11-13T22:34:46-05:00"
+  "soap_token": "3|wCpvohrn8kFcSl4GdjbIGMBWkettBHenlc4fF37V0cf10d5c",
+  "expira": "2026-11-19T17:52:54-05:00"
 }
 ```
 
-Los dos datos que se usan despues en SoapUI son:
+7. Copie el valor de `token` en un bloc de notas y etiquetelo con el rol.
+   Ese valor es el que se pega en **Authorization → Bearer Token**.
+8. Copie tambien el valor de `soap_username`. Ese es el **Username** de SoapUI.
+   (El `Password` de SoapUI es el mismo `token`.)
 
-- `token` (el Bearer de la sesion);
-- `soap_username` (el nombre de usuario, no el correo).
+Los cuatro logins son iguales, solo cambia `usuario` y el nombre del
+dispositivo:
+
+| Rol | Valor de `usuario` | Guarde el `token` como | `soap_username` |
+|---|---|---|---|
+| administrador | `administrador` | `admin_token` | `administrador` |
+| servicio_habitacion | `servicio_habitacion` | `servicio_token` | `servicio_habitacion` |
+| cajero | `cajero` | `cajero_token` | `cajero` |
+| recepcionista | `recepcionista` | `recepcion_token` | `recepcionista` |
+
+Ejemplo del segundo login:
+
+```json
+{
+  "usuario": "cajero",
+  "password": "123456",
+  "dispositivo": "postman-cajero"
+}
+```
+
+Los cuatro deben responder `200`.
+
+> **Importante:** cada login nuevo de un usuario revoca el token anterior de
+> ese mismo usuario. Haga los cuatro logins al principio y use esos tokens
+> durante toda la presentacion.
 
 El login tambien acepta `email` en lugar de `usuario`:
 
@@ -172,80 +258,198 @@ El login tambien acepta `email` en lugar de `usuario`:
 }
 ```
 
-### 2.3 Verificar el perfil con `/me`
+### 2.4 Ver el perfil con el token (`/me`)
 
-1. Abra la coleccion **Hotel API - Token para SoapUI**.
-2. Ejecute primero el login de esa coleccion.
-3. Ejecute `GET /api/me`.
+1. Cree una peticion nueva.
+2. Metodo **GET**.
+3. URL:
 
-Debe responder `200` con:
+```text
+http://hotel-consumos-api.test/api/me
+```
+
+4. Pestana **Authorization** → **Bearer Token** → pegue `admin_token`.
+5. Pulse **Send**.
+
+Esperado: `200` con:
 
 ```json
 {
-  "id": 1,
+  "id": 3,
   "nombre": "Administrador",
   "usuario": "administrador",
   "email": "administrador@hotel.test",
   "rol": "administrador",
   "soap_username": "administrador",
-  "expira": "2026-11-13T22:34:46-05:00"
+  "expira": "2026-11-19T17:52:54-05:00"
 }
 ```
 
-Si quiere probarlo con otro rol, cambie el `usuario` del login, vuelva a
-ejecutarlo y repita `/me`.
+Si repite con `cajero_token`, el campo `rol` debe decir `cajero`.
 
-### 2.4 Prueba 401: sin token o token invalido
+### 2.5 Probar el 401 (sin token o con token invalido)
 
-1. Abra `GET /api/me`.
-2. En la pestana **Authorization**, seleccione `No Auth` o borre la cabecera.
-3. Envie la peticion.
+**Caso 1: sin token**
 
-Esperado:
+1. En la misma peticion `/api/me`, abra **Authorization**.
+2. Elija **No Auth**.
+3. Pulse **Send**.
+
+Esperado: `401` con:
 
 ```json
 {"mensaje":"No autenticado. Se requiere un token Bearer valido."}
 ```
 
-Codigo: `401`. No debe ser `403`: primero se valida el token y despues el rol.
+**Caso 2: token inventado**
 
-Repita con un token inventado en `Authorization: Bearer token-invalido`.
-Tambien debe responder `401`.
+1. Vuelva a **Authorization** → **Bearer Token**.
+2. Pegue `token-invalido`.
+3. Pulse **Send**.
 
-### 2.5 Matriz de permisos
+Esperado: `401`, el mismo cuerpo.
 
-1. Ejecute la carpeta **1. Matriz de permisos**.
-2. Son 16 peticiones, una por combinacion de rol y accion.
-3. Todas deben quedar en verde.
+No debe ser `403`: primero se valida el token y despues el rol.
 
-La tabla que debe cumplirse es:
+### 2.6 Matriz de permisos (4 acciones x 4 roles)
+
+La regla es simple:
 
 | Accion | administrador | servicio_habitacion | cajero | recepcionista |
 |---|---|---|---|---|
 | Registrar consumo (`POST /api/consumos`) | si | si | no | no |
-| Consultar estado de cuenta (`GET /api/consumos/reserva/{id}`) | si | si | no | si |
+| Consultar estado de cuenta (`GET /api/consumos/reserva/1`) | si | si | no | si |
 | Pagar consumo (`POST /api/consumos/{id}/pagar`) | si | no | si | no |
-| Verificar checkout (`GET /api/checkout-status/{id}`) | si | no | si | si |
+| Verificar checkout (`GET /api/checkout-status/1`) | si | no | si | si |
 
-Cada peticion comprueba:
+Cada accion se prueba cuatro veces: una con cada token. Para las permitidas el
+codigo **no** debe ser `403`; para las no permitidas debe ser `403`.
 
-- si el rol esta permitido, la respuesta **no** es `403`;
-- si el rol no esta permitido, la respuesta es `403` con el cuerpo exacto.
+#### Accion 1: registrar consumo
 
-### 2.6 Verificar el cuerpo exacto del 403
-
-Abra una peticion no permitida, por ejemplo **Registrar consumo - cajero**, y
-enviela. Debe responder `403` con:
+- Metodo: **POST**
+- URL: `http://hotel-consumos-api.test/api/consumos`
+- Authorization: el token del rol que se esta probando
+- Body → raw → JSON:
 
 ```json
-{ "error": "Permisos insuficientes para ejecutar este método" }
+{
+  "id_reserva": "1",
+  "concepto": "Cena",
+  "monto": 15000
+}
 ```
 
-La tilde de `método` forma parte del contrato y debe conservarse.
+Esperado:
+
+| Token usado | Codigo |
+|---|---|
+| `admin_token` | `201` |
+| `servicio_token` | `201` |
+| `cajero_token` | `403` |
+| `recepcion_token` | `403` |
+
+La reserva `1` existe y esta `ACTIVA`, por eso el alta es `201`.
+
+#### Accion 2: consultar estado de cuenta
+
+- Metodo: **GET**
+- URL: `http://hotel-consumos-api.test/api/consumos/reserva/1`
+- Authorization: el token del rol
+- Sin cuerpo
+
+Esperado:
+
+| Token usado | Codigo |
+|---|---|
+| `admin_token` | `200` |
+| `servicio_token` | `200` |
+| `cajero_token` | `403` |
+| `recepcion_token` | `200` |
+
+El `200` trae la reserva y la lista de consumos de esa reserva:
+
+```json
+{
+  "id_reserva": "1",
+  "numero_habitacion": "101",
+  "nombre_huesped": "Carlos Andres Mendoza",
+  "estado_reserva": "ACTIVA",
+  "consumos": [
+    {
+      "id": 13,
+      "id_reserva": "1",
+      "concepto": "Cena de prueba",
+      "monto": 15000,
+      "estado": "Pendiente"
+    }
+  ]
+}
+```
+
+Si la reserva no tiene consumos, `consumos` sera `[]`.
+
+#### Accion 3: pagar consumo
+
+- Metodo: **POST**
+- URL: `http://hotel-consumos-api.test/api/consumos/8/pagar`
+- Authorization: el token del rol
+- Body → raw → JSON:
+
+```json
+{
+  "metodo_pago": "Efectivo"
+}
+```
+
+Esperado:
+
+| Token usado | Codigo |
+|---|---|
+| `admin_token` | `200` (o `409` si ya estaba pagado) |
+| `servicio_token` | `403` |
+| `cajero_token` | `200` (o `409` si ya estaba pagado) |
+| `recepcion_token` | `403` |
+
+El `8` es el id de un **consumo**, no de la reserva. Si ese id ya no existe,
+use cualquiera que aparezca en `consumos[].id` al consultar el estado de
+cuenta. Si ya estaba pagado, el rol permitido recibe `409`; para ver el `200`
+registre primero un consumo (seccion 2.9) y use ese id. Lo que importa en esta
+prueba es que los roles sin permiso reciben `403` antes de llegar al
+controlador.
+
+#### Accion 4: verificar checkout
+
+- Metodo: **GET**
+- URL: `http://hotel-consumos-api.test/api/checkout-status/1`
+- Authorization: el token del rol
+- Sin cuerpo
+
+Esperado:
+
+| Token usado | Codigo |
+|---|---|
+| `admin_token` | `200` |
+| `servicio_token` | `403` |
+| `cajero_token` | `200` |
+| `recepcion_token` | `200` |
+
+El `200` devuelve:
+
+```json
+{
+  "id_reserva": "1",
+  "paz_y_salvo": false,
+  "saldo_pendiente": 30000
+}
+```
+
+`paz_y_salvo` es `true` cuando `saldo_pendiente` es `0`.
 
 ### 2.7 El rol no se puede falsificar
 
-En la misma peticion del cajero, cambie el cuerpo a:
+1. Use la peticion de registrar consumo con `cajero_token`.
+2. Cambie el cuerpo por:
 
 ```json
 {
@@ -256,17 +460,31 @@ En la misma peticion del cajero, cambie el cuerpo a:
 }
 ```
 
-Debe seguir respondiendo `403`. El middleware lee
-`$request->user()->role` desde la base de datos e ignora cualquier `role` del
-cuerpo.
+3. Pulse **Send**.
 
-### 2.8 Flujo completo de consumos y pagos
+Esperado: `403` igual que antes. El middleware lee el rol desde la base de
+datos (`$request->user()->role`) e ignora el `role` del cuerpo.
 
-Use los tokens guardados por la carpeta **0. Login por rol**.
+### 2.8 Cuerpo exacto del 403
 
-#### Registrar un consumo
+En cualquier peticion no permitida (por ejemplo registrar consumo con
+`cajero_token`), la respuesta `403` debe ser exactamente:
 
-En `POST /api/consumos`, con `admin_token` o `servicio_token`:
+```json
+{ "error": "Permisos insuficientes para ejecutar este método" }
+```
+
+La tilde de `método` forma parte del contrato y debe conservarse.
+
+### 2.9 Flujo completo de consumos y pagos
+
+Se hace con los tokens ya guardados, en este orden.
+
+**Paso 1: registrar un consumo (rol administrador)**
+
+- **POST** `http://hotel-consumos-api.test/api/consumos`
+- Authorization: `admin_token`
+- Body:
 
 ```json
 {
@@ -276,18 +494,37 @@ En `POST /api/consumos`, con `admin_token` o `servicio_token`:
 }
 ```
 
-Esperado: `201` con el consumo creado. El identificador esta en
-`consumo.id` de la respuesta, no en la raiz.
+Esperado: `201`. En la respuesta busque `consumo.id`:
 
-#### Consultar el estado de cuenta
+```json
+{
+  "mensaje": "Consumo registrado exitosamente",
+  "consumo": {
+    "id": 13,
+    "id_reserva": "1",
+    "concepto": "Cena de prueba",
+    "monto": 15000,
+    "estado": "Pendiente"
+  }
+}
+```
 
-En `GET /api/consumos/reserva/1`, con `admin_token`:
+Anote ese `consumo.id` (el numero depende de su base; en el ejemplo, `13`).
 
-Esperado: `200` con los consumos y los datos de la reserva traidos de SOAP.
+**Paso 2: consultar el estado de cuenta**
 
-#### Pagar el consumo
+- **GET** `http://hotel-consumos-api.test/api/consumos/reserva/1`
+- Authorization: `admin_token`
 
-En `POST /api/consumos/{id}/pagar`, con `admin_token` o `cajero_token`:
+Esperado: `200`. En `consumos` debe aparecer el consumo recien creado con
+estado `Pendiente`.
+
+**Paso 3: pagar ese consumo (rol cajero)**
+
+- **POST** `http://hotel-consumos-api.test/api/consumos/13/pagar`
+  (cambie `13` por el id que anoto)
+- Authorization: `cajero_token`
+- Body:
 
 ```json
 {
@@ -295,11 +532,12 @@ En `POST /api/consumos/{id}/pagar`, con `admin_token` o `cajero_token`:
 }
 ```
 
-Esperado: `200`.
+Esperado: `200`. El consumo pasa a estado `Pagado` y se crea el registro del
+pago.
 
-#### Pagar dos veces
+**Paso 4: pagar dos veces**
 
-Repita la misma peticion de pago.
+- Pulse **Send** otra vez con la misma peticion.
 
 Esperado: `409 Conflict` con:
 
@@ -307,20 +545,22 @@ Esperado: `409 Conflict` con:
 {"mensaje":"Este consumo ya se encuentra pagado"}
 ```
 
-#### Verificar checkout
+**Paso 5: verificar checkout**
 
-En `GET /api/checkout-status/1`, con `admin_token`, `cajero_token` o
-`recepcion_token`.
+- **GET** `http://hotel-consumos-api.test/api/checkout-status/1`
+- Authorization: `admin_token` (tambien sirve `cajero_token` o `recepcion_token`)
 
-Esperado: `200` con `paz_y_salvo = true` si ya no hay consumos pendientes.
+Esperado: `200`. Si no quedan consumos pendientes en la reserva 1,
+`paz_y_salvo` sera `true` y `saldo_pendiente` sera `0`.
 
-### 2.9 Otros errores controlados
+### 2.10 Errores controlados
 
 | Prueba | Como hacerla en Postman | Esperado |
 |---|---|---|
-| Validacion | Enviar `POST /api/consumos` con `{"concepto":"Sin datos"}` | `422` con `mensaje` y `errors` |
-| Ruta inexistente | `GET /api/ruta-inexistente` | `404` con `{"mensaje":"Recurso no encontrado."}` |
-| Metodo incorrecto | `GET /api/login` | `405` con `{"mensaje":"Metodo no permitido para esta ruta."}` |
+| Validacion | **POST** `/api/consumos` con `admin_token` y cuerpo `{"concepto":"Sin datos"}` | `422` con `mensaje` y `errors` |
+| Reserva inexistente | **POST** `/api/consumos` con `admin_token` y `{"id_reserva":"999","concepto":"Cena","monto":10}` | `404` |
+| Ruta inexistente | **GET** `http://hotel-consumos-api.test/api/ruta-inexistente` | `404` con `{"mensaje":"Recurso no encontrado."}` |
+| Metodo incorrecto | **GET** `http://hotel-consumos-api.test/api/login` | `405` con `{"mensaje":"Metodo no permitido para esta ruta."}` |
 | Demasiados intentos | Enviar 6 veces el login con `usuario` `prueba-throttle` y clave `mala` | Los primeros `401` y el sexto `429` |
 | SOAP caido | Detener Apache o MySQL y registrar un consumo | `503` |
 
@@ -330,85 +570,129 @@ Para reiniciar el contador de intentos:
 php artisan cache:clear
 ```
 
+### 2.11 Opcional: importar las colecciones
+
+Si prefiere ejecutar todo de una vez en lugar de escribir cada peticion, los
+archivos de `postman/` siguen disponibles:
+
+1. **Import** → seleccione los tres archivos de `postman/`.
+2. Elija el entorno **Hotel Local**.
+3. Ejecute la carpeta **0. Login por rol** y luego **1. Matriz de permisos**.
+
+Esto es solo un atajo. La presentacion se puede hacer completa con las
+peticiones manuales de las secciones 2.3 a 2.10.
+
 ---
 
-## 3. Demostracion con SoapUI
+## 3. SoapUI paso a paso
 
 SoapUI demuestra que el mismo token de Postman sirve para SOAP y que el rol
 decide si la operacion se ejecuta o se bloquea.
 
-### 3.1 Obtener el token en Postman
+### 3.1 Que necesita antes de abrir SoapUI
 
-1. Ejecute el login del rol que va a probar.
-2. Copie el valor de `token`.
-3. Copie tambien el valor de `soap_username`.
+Del login en Postman (seccion 2.3) tome dos datos del rol que va a probar:
 
-Ejemplo para administrador:
+- `token`: va como **Password**;
+- `soap_username`: va como **Username**.
 
-| Dato | Valor |
-|---|---|
-| Username | `administrador` |
-| Password | el `token` devuelto por el login |
-| Password type | `PasswordText` |
+| Rol a probar | Login en Postman (`usuario`) | Username en SoapUI | Password en SoapUI |
+|---|---|---|---|
+| administrador | `administrador` | `administrador` | `admin_token` |
+| servicio_habitacion | `servicio_habitacion` | `servicio_habitacion` | `servicio_token` |
+| recepcionista | `recepcionista` | `recepcionista` | `recepcion_token` |
+| cajero | `cajero` | `cajero` | `cajero_token` |
+
+Use el `soap_username`, no el correo. Con el correo el servidor responde `401`.
 
 ### 3.2 Crear el proyecto SOAP
 
 1. Abra SoapUI.
-2. Cree un proyecto SOAP con el WSDL:
+2. **File** → **New SOAP Project**.
+3. En **Initial WSDL** pegue:
 
 ```text
 http://127.0.0.1/hotel/server.php?wsdl
 ```
 
-3. Abra la operacion `consultarReservas`.
+4. Deje el nombre que propone y pulse **OK**.
+5. En el arbol de la izquierda despliegue el proyecto hasta
+   `consultarReservas`.
+6. Doble clic en `Request 1`. Se abre el editor de la peticion.
 
-### 3.3 Configurar WS-Security
+### 3.3 Agregar el usuario y el token (WS-Security)
 
-1. En `WS-Security Configurations`, agregue una configuracion.
-2. Tipo: `Username`.
-3. Username: el `soap_username` del login.
-4. Password: el `token` del login.
-5. Password type: `PasswordText`.
-6. Asocie la configuracion a la peticion.
+1. En la parte inferior del editor busque la pestana
+   **WS-Security Configurations**.
+2. Pulse el boton verde `+` para agregar una configuracion.
+3. Escriba en los campos:
+   - **Username**: el `soap_username` del rol (por ejemplo `administrador`).
+   - **Password**: el `token` copiado de Postman.
+   - **Password Type**: `PasswordText`.
+4. Marque la configuracion para que se aplique a la peticion saliente
+   (boton **Apply** o la casilla de la lista).
+5. Verifique en la pestana **Raw** que el sobre incluye la cabecera
+   `wsse:Security` con `Username` y `Password`.
+
+Si su version de SoapUI muestra una pestana **Auth** en lugar de ese panel,
+elija el mecanismo **WSS Username Token** y llene los mismos tres datos.
 
 ### 3.4 Ejecutar `consultarReservas`
 
-Envie la peticion y compare con esta tabla:
+1. Con el editor de `Request 1` abierto, pulse el boton verde de enviar.
+2. Espere `200`. El servidor devuelve la lista de reservas como un texto JSON
+   dentro de `<return>`:
 
-| Username | Token | `consultarReservas` | Otra operacion |
-|---|---|---|---|
-| `administrador` | vigente | `200` | `403` |
-| `servicio_habitacion` | vigente | `200` | `403` |
-| `recepcionista` | vigente | `200` | `403` |
-| `cajero` | vigente | `403` | `403` |
-| cualquiera | invalido o vencido | `401` | `401` |
-| usuario sin rol | vigente | `403` | `403` |
+```xml
+<SOAP-ENV:Body>
+  <ns1:consultarReservasResponse xmlns:ns1="urn:HotelService">
+    <return xsi:type="xsd:string">[
+      {"id":1,"fecha_entrada":"2026-10-15","fecha_salida":"2026-10-20",
+       "estado":"ACTIVA","numero_habitacion":"101","tipo_habitacion":"Sencilla",
+       "nombre_huesped":"Carlos Andres Mendoza","documento":"1010101"},
+      {"id":2,...},
+      {"id":3,...}
+    ]</return>
+  </ns1:consultarReservasResponse>
+</SOAP-ENV:Body>
+```
 
-Resultado esperado:
+Deben aparecer las reservas 1, 2 y 3. En SoapUI las comillas se ven escapadas
+como `&quot;`; es normal, porque la lista viaja como cadena de texto.
 
-- administrador, servicio de habitacion y recepcionista reciben la lista de
-  reservas;
-- el cajero recibe `403`, porque no tiene ninguna operacion SOAP permitida.
+### 3.5 Probar los cuatro roles
 
-> En SoapUI, el `403` llega como **SOAP Fault** con codigo HTTP `403`, no como
+Cambie **Username** y **Password** en WS-Security por los del rol y envie otra
+vez:
+
+| Username | Password | `consultarReservas` |
+|---|---|---|
+| `administrador` | `admin_token` | `200` con la lista |
+| `servicio_habitacion` | `servicio_token` | `200` con la lista |
+| `recepcionista` | `recepcion_token` | `200` con la lista |
+| `cajero` | `cajero_token` | `403` |
+
+El cajero no tiene ninguna operacion SOAP permitida, por eso recibe `403`.
+
+> En SoapUI el `403` llega como **SOAP Fault** con codigo HTTP `403`, no como
 > el JSON de REST. El cuerpo JSON exacto se exige en los middlewares REST; en
 > SOAP el servidor responde con un fault.
 
-### 3.5 Token invalido o vencido
+### 3.6 Token invalido o vencido
 
-Cambie el Password de WS-Security por `token-invalido` y envie la peticion.
+Cambie el **Password** de WS-Security por `token-invalido` y envie.
 
 Esperado: `401`.
 
-### 3.6 Operacion no permitida
+### 3.7 Operacion no permitida
 
 Aunque el rol sea administrador, el enunciado solo autoriza
-`consultarReservas`. Abra otra operacion, por ejemplo `listarHabitaciones`, y
-enviela con el mismo token.
+`consultarReservas`. Abra otra operacion del proyecto, por ejemplo
+`listarHabitaciones`, y enviela con el mismo token.
 
 Esperado: `403`.
 
-### 3.7 Forzar el vencimiento del token
+### 3.8 Forzar el vencimiento del token
 
 El token dura 480 minutos. Para demostrar el `401` sin esperar 8 horas, fuerce
 el vencimiento en `hotel_db`:
@@ -424,10 +708,10 @@ Vuelva a enviar `consultarReservas` con el token anterior.
 
 Esperado: `401`. Un login nuevo restaura el acceso.
 
-### 3.8 Recordatorio importante
+### 3.9 Recordatorio importante
 
-Cada login nuevo invalida el token anterior. Si vuelve a iniciar sesion en
-Postman, debe actualizar el Password en SoapUI o recibira `401`.
+Cada login nuevo invalida el token anterior de ese usuario. Si vuelve a iniciar
+sesion en Postman, debe actualizar el **Password** en SoapUI o recibira `401`.
 
 ---
 
@@ -747,6 +1031,7 @@ Esperado: `401` con token invalido y `403` con una operacion no permitida.
 
 | Sintoma | Causa probable | Solucion |
 |---|---|---|
+| No se donde pegar el token | Falta la pestana Authorization | **Authorization** → **Bearer Token** → pegar el `token` del login |
 | `422` con `The usuario field is required` | Se envio el cuerpo vacio o sin `usuario`/`email` | Envie `{"usuario":"administrador","password":"123456"}` |
 | `401` en REST con un token que funcionaba | Se hizo otro login y el token anterior fue revocado | Use el token mas reciente |
 | `401` en SOAP | Token vencido, revocado o `Username` con el correo viejo | Haga login y use el `soap_username` devuelto |
@@ -755,7 +1040,7 @@ Esperado: `401` con token invalido y `403` con una operacion no permitida.
 | `429` al hacer login | Se superaron 5 intentos por minuto | Espere 60 segundos o `php artisan cache:clear` |
 | `503` al registrar o consultar | El servidor SOAP o `hotel_db` no responde | Revise Apache, la carpeta `hotel` y MySQL |
 | `500` al hacer login | Falta la migracion de `users.username` | `php artisan migrate` |
-| Postman no encuentra `{{base_url}}` | No se selecciono el entorno | Seleccione `Hotel Local` |
+| Postman no encuentra `{{base_url}}` | No se selecciono el entorno (solo si importo las colecciones) | Seleccione `Hotel Local` |
 | SoapUI responde `401` | El Password no es el token vigente | Vuelva a hacer login y actualice el Password |
 
 Revise errores detallados en:
@@ -768,19 +1053,22 @@ storage/logs/laravel.log
 
 ## 8. Lista de verificacion para la presentacion
 
+- [ ] Laragon arriba y `http://hotel-consumos-api.test` muestra la pantalla de Laravel.
 - [ ] `php artisan migrate --seed` ejecutado sin errores.
 - [ ] Los cuatro usuarios existen con su `username` y su rol.
 - [ ] En Postman, los cuatro logins responden `200`.
-- [ ] Login con `administrador` devuelve `200` y `soap_username = administrador`.
+- [ ] El login de `administrador` devuelve `soap_username = administrador`.
 - [ ] `GET /api/me` sin token devuelve `401`.
 - [ ] `GET /api/me` con token devuelve el rol correcto.
-- [ ] Matriz REST en Postman: 16 combinaciones, las permitidas no dan `403` y las demas si.
+- [ ] Matriz REST: las 16 combinaciones cumplen (permitidas no dan `403`, no permitidas si).
 - [ ] El cuerpo del `403` es exacto y conserva `método`.
 - [ ] Un `role` falso en el body no cambia el resultado.
-- [ ] Registrar, consultar, pagar y checkout funcionan con los roles correctos.
-- [ ] El segundo pago devuelve `409`.
+- [ ] Registrar consumo devuelve `201` con `admin_token` y `servicio_token`.
+- [ ] Consultar estado de cuenta devuelve `200` con los consumos y la reserva.
+- [ ] Pagar devuelve `200` y el segundo pago devuelve `409`.
+- [ ] Checkout devuelve `200` con `paz_y_salvo` y `saldo_pendiente`.
 - [ ] En SoapUI, administrador, servicio y recepcion devuelven `200` con `consultarReservas`.
 - [ ] En SoapUI, el cajero devuelve `403`.
 - [ ] En SoapUI, un token invalido devuelve `401`.
 - [ ] `php artisan test` termina con 59 pruebas y 239 aserciones en verde.
-- [ ] La coleccion de Postman queda completamente en verde.
+- [ ] Opcional: las colecciones importadas de `postman/` quedan en verde.
