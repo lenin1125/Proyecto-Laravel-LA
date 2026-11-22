@@ -586,26 +586,87 @@ peticiones manuales de las secciones 2.3 a 2.10.
 
 ## 3. SoapUI paso a paso
 
-SoapUI demuestra que el mismo token de Postman sirve para SOAP y que el rol
-decide si la operacion se ejecuta o se bloquea.
+SoapUI demuestra dos cosas a la vez:
 
-### 3.1 Que necesita antes de abrir SoapUI
+- el token que entrega el login de Postman tambien sirve para SOAP;
+- el rol decide si la operacion se ejecuta o se bloquea.
 
-Del login en Postman (seccion 2.3) tome dos datos del rol que va a probar:
+### 3.1 La idea: el rol no se escribe, lo busca el servidor
 
-- `token`: va como **Password**;
-- `soap_username`: va como **Username**.
+En SoapUI **no se crea una peticion por rol**. Se crea una sola peticion
+(`consultarReservas`) y se cambian solo dos datos: **Username** y **Password**.
+El XML de la operacion es el mismo para los cuatro roles.
 
-| Rol a probar | Login en Postman (`usuario`) | Username en SoapUI | Password en SoapUI |
+El servidor hace esto, en este orden:
+
+1. Lee la cabecera WS-Security (`Username` y `Password`).
+2. Busca ese `Username` en `hotel_db.usuarios`.
+3. Compara el `Password` con el token guardado (`api_token`) y revisa que no
+   este vencido (`token_expira_en`). Si algo falla: **401**.
+4. Lee el rol de ese usuario (`hotel_db.usuarios.role`).
+5. Compara la operacion pedida con las operaciones permitidas para ese rol.
+   Si no esta permitida: **403**.
+6. Si todo coincide, ejecuta la operacion: **200**.
+
+Por eso el rol nunca viaja en el XML: se deduce del usuario autenticado. Para
+comprobarlo en la base:
+
+```sql
+SELECT username, role FROM hotel_db.usuarios
+WHERE username IN ('administrador', 'servicio_habitacion', 'cajero', 'recepcionista');
+```
+
+### 3.2 Que se escribe en la cabecera
+
+Solo dos datos, dentro de `<wsse:UsernameToken>`:
+
+| Campo | Que se escribe | Ejemplo |
+|---|---|---|
+| `<wsse:Username>` | el `soap_username` del login | `administrador` |
+| `<wsse:Password>` | el `token` completo del login | `3\|wCpvohrn...` |
+
+No se escribe: el correo, la contrasena `123456`, el rol, el JSON del login ni
+la palabra `Bearer`.
+
+Plantilla de la cabecera:
+
+```xml
+<soapenv:Header>
+  <wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
+    <wsse:UsernameToken>
+      <wsse:Username>administrador</wsse:Username>
+      <wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText">PEGA_AQUI_EL_TOKEN</wsse:Password>
+    </wsse:UsernameToken>
+  </wsse:Security>
+</soapenv:Header>
+```
+
+Esta cabecera es la misma para las cuatro pruebas. Solo cambia el valor de
+`Username` y el token.
+
+### 3.3 De donde salen el usuario y el token
+
+Se obtienen en Postman con el login del rol (seccion 2.3). Cada rol tiene su
+propio par:
+
+| Prueba | `usuario` en el login | Username en SoapUI | Password en SoapUI |
 |---|---|---|---|
 | administrador | `administrador` | `administrador` | `admin_token` |
 | servicio_habitacion | `servicio_habitacion` | `servicio_habitacion` | `servicio_token` |
 | recepcionista | `recepcionista` | `recepcionista` | `recepcion_token` |
 | cajero | `cajero` | `cajero` | `cajero_token` |
 
+Dos reglas importantes:
+
+- el token debe ser del **mismo login** que el Username. Si pone `Username`
+  `administrador` con el token del cajero, el servidor responde `401`, porque
+  ese token no pertenece a ese usuario;
+- cada login nuevo revoca el token anterior de ese usuario. Copie el token
+  justo despues del login.
+
 Use el `soap_username`, no el correo. Con el correo el servidor responde `401`.
 
-### 3.2 Crear el proyecto SOAP
+### 3.4 Crear el proyecto SOAP
 
 1. Abra SoapUI.
 2. **File** → **New SOAP Project**.
@@ -620,28 +681,60 @@ http://127.0.0.1/hotel/server.php?wsdl
    `consultarReservas`.
 6. Doble clic en `Request 1`. Se abre el editor de la peticion.
 
-### 3.3 Agregar el usuario y el token (WS-Security)
+La peticion que SoapUI genera trae el header vacio:
+
+```xml
+<soapenv:Header/>
+```
+
+Ese header vacio es normal. No se llena con el JSON del login: se reemplaza por
+el bloque `wsse:Security` de la seccion 3.2.
+
+### 3.5 Configurar la cabecera
+
+Hay dos caminos. Use el que le muestre su version de SoapUI.
+
+**Camino A: con la interfaz (recomendado)**
 
 1. En la parte inferior del editor busque la pestana
-   **WS-Security Configurations**.
+   **WS-Security Configurations** (en algunas versiones se llama **Auth**).
 2. Pulse el boton verde `+` para agregar una configuracion.
 3. Escriba en los campos:
    - **Username**: el `soap_username` del rol (por ejemplo `administrador`).
    - **Password**: el `token` copiado de Postman.
    - **Password Type**: `PasswordText`.
-4. Marque la configuracion para que se aplique a la peticion saliente
-   (boton **Apply** o la casilla de la lista).
-5. Verifique en la pestana **Raw** que el sobre incluye la cabecera
-   `wsse:Security` con `Username` y `Password`.
+4. Marque la configuracion como **Outgoing** (o pulse **Apply**) para que se
+   aplique a la peticion.
+5. Verifique en la pestana **Raw** que el sobre ya incluye `wsse:Security` con
+   `Username` y `Password`.
 
-Si su version de SoapUI muestra una pestana **Auth** en lugar de ese panel,
-elija el mecanismo **WSS Username Token** y llene los mismos tres datos.
+**Camino B: escribiendo el XML**
 
-### 3.4 Ejecutar `consultarReservas`
+Si no encuentra esa pestana, use la pestana **XML** del editor y pegue el sobre
+completo. Cambie `PEGA_AQUI_EL_TOKEN` por su token:
 
-1. Con el editor de `Request 1` abierto, pulse el boton verde de enviar.
-2. Espere `200`. El servidor devuelve la lista de reservas como un texto JSON
-   dentro de `<return>`:
+```xml
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:urn="urn:HotelService">
+  <soapenv:Header>
+    <wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
+      <wsse:UsernameToken>
+        <wsse:Username>administrador</wsse:Username>
+        <wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText">PEGA_AQUI_EL_TOKEN</wsse:Password>
+      </wsse:UsernameToken>
+    </wsse:Security>
+  </soapenv:Header>
+  <soapenv:Body>
+    <urn:consultarReservas/>
+  </soapenv:Body>
+</soapenv:Envelope>
+```
+
+### 3.6 Primera prueba: administrador
+
+1. Con `Username` `administrador` y su token, pulse el boton verde de enviar.
+2. Debe responder `200`. El servidor devuelve la lista de reservas como un texto
+   JSON dentro de `<return>`:
 
 ```xml
 <SOAP-ENV:Body>
@@ -660,39 +753,63 @@ elija el mecanismo **WSS Username Token** y llene los mismos tres datos.
 Deben aparecer las reservas 1, 2 y 3. En SoapUI las comillas se ven escapadas
 como `&quot;`; es normal, porque la lista viaja como cadena de texto.
 
-### 3.5 Probar los cuatro roles
+### 3.7 Las cuatro pruebas por rol
 
-Cambie **Username** y **Password** en WS-Security por los del rol y envie otra
-vez:
+No cambie el XML de la operacion ni cree peticiones nuevas. Solo cambie
+**Username** y **Password** en la cabecera y envie otra vez:
 
-| Username | Password | `consultarReservas` |
-|---|---|---|
-| `administrador` | `admin_token` | `200` con la lista |
-| `servicio_habitacion` | `servicio_token` | `200` con la lista |
-| `recepcionista` | `recepcion_token` | `200` con la lista |
-| `cajero` | `cajero_token` | `403` |
+| # | Username | Password | Resultado esperado |
+|---|---|---|---|
+| 1 | `administrador` | `admin_token` | `200` con la lista |
+| 2 | `servicio_habitacion` | `servicio_token` | `200` con la lista |
+| 3 | `recepcionista` | `recepcion_token` | `200` con la lista |
+| 4 | `cajero` | `cajero_token` | `403` con SOAP Fault |
 
+En la prueba 4 el usuario y el token son correctos: lo que falla es el permiso.
 El cajero no tiene ninguna operacion SOAP permitida, por eso recibe `403`.
 
-> En SoapUI el `403` llega como **SOAP Fault** con codigo HTTP `403`, no como
-> el JSON de REST. El cuerpo JSON exacto se exige en los middlewares REST; en
-> SOAP el servidor responde con un fault.
+### 3.8 Como leer el resultado
 
-### 3.6 Token invalido o vencido
+| HTTP | Cuando ocurre | Que muestra SoapUI |
+|---|---|---|
+| `200` | el rol tiene permiso para esa operacion | la lista de reservas en `<return>` |
+| `401` | token invalido, vencido, o Username y token de logins distintos | `SOAP Fault`: `401 Unauthorized: usuario o token invalido.` |
+| `403` | el rol no tiene permiso, o la operacion no esta autorizada | `SOAP Fault`: `403 Forbidden: permisos insuficientes para ejecutar este método.` |
+
+En SoapUI el codigo HTTP se ve en la respuesta (pestana **Headers** o **Raw**) y
+en la barra de estado de la parte inferior. El detalle del error viene dentro
+del SOAP Fault, no como el JSON de REST.
+
+> El `403` de SoapUI no es un fallo de configuracion: es la prueba de que el
+> control de permisos funciona. El mismo token del cajero si puede usarse en
+> REST para pagar consumos, pero no para SOAP.
+
+### 3.9 Token invalido
 
 Cambie el **Password** de WS-Security por `token-invalido` y envie.
 
-Esperado: `401`.
+Esperado: `401` con:
 
-### 3.7 Operacion no permitida
+```xml
+<soap:Fault>
+  <faultcode>soap:Client</faultcode>
+  <faultstring>401 Unauthorized: usuario o token invalido.</faultstring>
+</soap:Fault>
+```
+
+Pruebe tambien el caso contrario: `Username` `administrador` con el token
+vigente del cajero. Esperado: `401`, porque el token no pertenece a ese
+usuario.
+
+### 3.10 Operacion no permitida
 
 Aunque el rol sea administrador, el enunciado solo autoriza
 `consultarReservas`. Abra otra operacion del proyecto, por ejemplo
-`listarHabitaciones`, y enviela con el mismo token.
+`listarHabitaciones`, deje la misma cabecera y enviela.
 
-Esperado: `403`.
+Esperado: `403`, con el mismo `faultstring` del 403 anterior.
 
-### 3.8 Forzar el vencimiento del token
+### 3.11 Forzar el vencimiento del token
 
 El token dura 480 minutos. Para demostrar el `401` sin esperar 8 horas, fuerce
 el vencimiento en `hotel_db`:
@@ -708,7 +825,7 @@ Vuelva a enviar `consultarReservas` con el token anterior.
 
 Esperado: `401`. Un login nuevo restaura el acceso.
 
-### 3.9 Recordatorio importante
+### 3.12 Recordatorio importante
 
 Cada login nuevo invalida el token anterior de ese usuario. Si vuelve a iniciar
 sesion en Postman, debe actualizar el **Password** en SoapUI o recibira `401`.
