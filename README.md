@@ -82,7 +82,7 @@ contrasena `123456`:
 En SOAP los tres primeros roles pueden ejecutar solo `consultarReservas`; el
 cajero ninguna. `IsAdministrator` existe y esta probado con una ruta en memoria;
 el administrador se repite en los cuatro middlewares (variante A1).
-El detalle esta en `postman/README.md` y la guia paso a paso en `GUIA-DE-PRUEBAS.md`.
+El detalle esta en `postman/README.md`.
 
 ## Seguridad
 
@@ -107,7 +107,5 @@ Usan la base `hotel_consumos_api_test` definida en `phpunit.xml`.
 
 ## Documentacion
 
-- `DOCUMENTACION.md`: revision tecnica completa del proyecto.
-- `GUIA-DE-PRUEBAS.md`: guia paso a paso para demostrar el enunciado.
-- `ENTENDIMIENTO-REQUERIMIENTOS.md`: explicacion de roles y middlewares en lenguaje sencillo.
+- `README.md`: instalacion, uso de la API y permisos.
 - `postman/README.md`: uso de la coleccion y del entorno.
